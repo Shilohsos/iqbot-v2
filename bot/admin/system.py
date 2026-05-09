@@ -29,7 +29,7 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             for p in procs:
                 if p.get('name') == name:
                     status = p.get('pm2_env', {}).get('status') or 'unknown'
-                return status.upper()
+                    return status.upper()
         except Exception:
             pass
         return 'UNKNOWN'
