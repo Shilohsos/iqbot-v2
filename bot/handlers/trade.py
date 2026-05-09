@@ -260,7 +260,7 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     pnl = close['pnl']
     if res == 'WIN':
         img = 'assets/trade_win.png'
-        caption = f"💚 *WIN!* +{format_pnl(pnl)}"
+        caption = f"💚 *WIN!* {format_pnl(pnl)}"
     elif res == 'LOSS':
         img = 'assets/trade_loss.png'
         caption = f"💔 *LOSS* -{format_amount(abs(amount))}"

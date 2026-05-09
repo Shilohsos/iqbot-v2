@@ -73,7 +73,7 @@ async def main():
         logger.error("AFFILIATE_CHANNEL_ID not set")
         return
 
-    channel_id = int(CHANNEL_ID) if CHANNEL_ID.startswith('-100') else int(CHANNEL_ID)
+    channel_id = int(CHANNEL_ID) if CHANNEL_ID.startswith('-') else int(f'-100{CHANNEL_ID}')
 
     logger.info(f"Listening for affiliate events in channel {channel_id}")
 
