@@ -25,7 +25,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "\n*Admin Commands:*\n"
             "/admin — Open admin panel\n"
             "/find <query> — Find a user\n"
-            "/assign\\_token @user TOKEN — Assign a token\n"
+            "/assign_token @user TOKEN — Assign a token\n"
             "/broadcast — Compose a broadcast\n"
             "/audit — Generate audit report\n"
         )

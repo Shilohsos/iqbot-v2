@@ -31,11 +31,11 @@ def calculate_bias(candles: list) -> Optional[dict]:
     ema21 = ema21_list[-1]
 
     if ema9 > ema21:
-        diff_pct = abs(ema9 - ema21) / closes[-1] * 1000 if closes[-1] else 0
+        diff_pct = abs(ema9 - ema21) / closes[-1] * 100 if closes[-1] else 0
         ema_score = 70 + min(30, diff_pct)
         ema_signal = 'BULL'
     elif ema9 < ema21:
-        diff_pct = abs(ema9 - ema21) / closes[-1] * 1000 if closes[-1] else 0
+        diff_pct = abs(ema9 - ema21) / closes[-1] * 100 if closes[-1] else 0
         ema_score = 30 - min(30, diff_pct)
         ema_signal = 'BEAR'
     else:

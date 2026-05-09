@@ -5,6 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from bot.middleware.admin_gate import require_admin
 import os
+import redis as _redis_sync
 
 
 def status_emoji(status):
@@ -39,8 +40,18 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     bias_count = conn.execute("SELECT COUNT(*) FROM market_bias").fetchone()[0]
     conn.close()
 
-    bias_status = pm2_status('iqbot-v2-bias')
+    bias_status = pm2_status('iqbot-v2-bias-engine')
     bot_status = pm2_status('iqbot-v2-bot')
+
+    # Real Redis connectivity check
+    try:
+        _r = _redis_sync.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'),
+                                   socket_connect_timeout=2)
+        _r.ping()
+        redis_status = '🟢 connected'
+        _r.close()
+    except Exception:
+        redis_status = '⚫ down'
 
     text = (
         f"🖥 *System Status*\n\n"
@@ -51,7 +62,7 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"  - Trades: {trades_count} rows\n"
         f"  - Users: {users_count} rows\n"
         f"  - Bias entries: {bias_count} active\n"
-        f"Redis: {'🟢 connected' if True else '⚫ down'}\n"
+        f"Redis: {redis_status}\n"
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -76,7 +87,7 @@ async def cb_system_action(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         from utils.pm2_manager import kill_watcher
         # Restart bias via PM2
         import subprocess
-        subprocess.run(['pm2', 'restart', 'iqbot-v2-bias'], capture_output=True)
+        subprocess.run(['pm2', 'restart', 'iqbot-v2-bias-engine'], capture_output=True)
         await update.callback_query.edit_message_text("🔄 Bias engine restart triggered.")
 
     elif action == 'view_logs':

@@ -152,6 +152,20 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tf = ctx.user_data['trade_timeframe']
     amount = ctx.user_data['trade_amount']
 
+    # Check sufficient balance before sending to watcher
+    summary = get_user_account_summary(user['id'])
+    available = (
+        summary['practice_balance'] if balance_type == 'PRACTICE'
+        else summary['real_balance']
+    )
+    if available < amount:
+        await update.callback_query.answer("Insufficient balance.", show_alert=True)
+        await update.callback_query.edit_message_text(
+            f"❌ Insufficient balance. Available: `{available:.2f}`, needed: `{amount}`.",
+            parse_mode='Markdown',
+        )
+        return
+
     await update.callback_query.answer("Placing trade...")
     await update.callback_query.edit_message_text(
         "⏳ *Analyzing market...*\n\nReading bias and executing trade.",

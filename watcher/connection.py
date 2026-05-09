@@ -50,10 +50,15 @@ class UserWatcher:
                 bal.get('currency', 'USD')
             )
 
-        # Subscribe to position + balance changes
-        await self.client.ws.send(msg_subscribe_position_state(gen_request_id()))
+        # Subscribe to position + balance changes (fire-and-forget; confirmations
+        # arrive as normal WebSocket messages and are logged by the client)
+        req_id = gen_request_id()
+        await self.client.ws.send(msg_subscribe_position_state(req_id))
+        logger.info(f"Sent position-state subscription (req_id={req_id}) for user {self.user_id}")
         for bal_id in self.client.balances:
-            await self.client.ws.send(msg_subscribe_balance(bal_id, gen_request_id()))
+            req_id = gen_request_id()
+            await self.client.ws.send(msg_subscribe_balance(bal_id, req_id))
+            logger.info(f"Sent balance subscription bal_id={bal_id} (req_id={req_id}) for user {self.user_id}")
 
         @self.client.on_position_changed
         async def handle_position(data):

@@ -278,15 +278,3 @@ def get_users_by_segment(segment: str) -> list:
         return [dict(r) for r in rows]
     finally:
         conn.close()
-
-
-def log_funnel_event(telegram_id, event_type: str, metadata: str = None):
-    conn = get_connection()
-    try:
-        conn.execute(
-            "INSERT INTO funnel_events (telegram_id, event_type, metadata) VALUES (?,?,?)",
-            (telegram_id, event_type, metadata)
-        )
-        conn.commit()
-    finally:
-        conn.close()

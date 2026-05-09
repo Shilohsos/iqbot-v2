@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS market_bias (
     macd_signal TEXT,
     last_close REAL,
     candles_used INTEGER,
+    is_suspended INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(asset, timeframe_seconds)
 );
@@ -156,6 +157,10 @@ def init_db():
     """Initialize schema. Safe to call multiple times."""
     conn = get_connection()
     conn.executescript(SCHEMA)
+    # Migration: add is_suspended if upgrading from older schema
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_bias)")}
+    if 'is_suspended' not in cols:
+        conn.execute("ALTER TABLE market_bias ADD COLUMN is_suspended INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
     print(f"Database initialized at {DATABASE_PATH}")

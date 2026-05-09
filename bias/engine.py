@@ -30,6 +30,9 @@ async def run_bias_engine():
     client = IQOptionClient(ssid=ssid, platform_id=platform_id)
     await client.connect()
 
+    # Limit concurrent get_candles calls to avoid flooding the API
+    _candle_semaphore = asyncio.Semaphore(4)
+
     # Resubscribe helper
     async def subscribe_all():
         for pair in BIAS_PAIRS:
@@ -53,8 +56,9 @@ async def run_bias_engine():
     @client.on_candle_close
     async def handle_candle(pair: str, timeframe: int, candle: dict):
         logger.info(f"CANDLE EVENT: {pair} @ {timeframe}s phase={candle.get('phase','?')} close={candle.get('close')}")
-        # Fetch the last 50 candles for this pair+tf
-        candles = await client.get_candles(pair, timeframe, count=50)
+        # Fetch the last 50 candles — throttled to avoid concurrent API floods
+        async with _candle_semaphore:
+            candles = await client.get_candles(pair, timeframe, count=50)
         if not candles:
             logger.warning(f"No candles returned for {pair} @ {timeframe}s")
             return
@@ -64,10 +68,13 @@ async def run_bias_engine():
             logger.warning(f"Bias calculation returned None for {pair} @ {timeframe}s")
             return
 
-        # Persist
+        # Persist (pass live suspension status so the trade keyboard filters it out)
+        active_id = client.actives_by_name.get(pair)
+        is_suspended = client.actives.get(active_id, {}).get('is_suspended', False) if active_id else False
         upsert_bias(
             asset=pair,
             timeframe_seconds=timeframe,
+            is_suspended=is_suspended,
             **bias,
         )
 
