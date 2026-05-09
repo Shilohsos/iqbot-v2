@@ -8,6 +8,9 @@ from database.models.users import get_user
 from database.models.accounts import add_account
 from core.encryption import encrypt_credential
 from bot.middleware.approval_gate import require_approved
+from utils.logger import get_logger
+
+logger = get_logger("onboard")
 
 EMAIL, PASSWORD = range(2)
 
@@ -48,8 +51,8 @@ async def receive_password(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Delete the password message immediately
     try:
         await update.message.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Could not delete password message for user {update.effective_user.id}: {e}")
 
     user = get_user(update.effective_user.id)
 

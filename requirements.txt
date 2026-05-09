@@ -8,9 +8,8 @@ aiohttp>=3.10
 # Telegram Bot
 python-telegram-bot>=21.0
 
-# Redis
+# Redis (redis>=4.2 includes redis.asyncio — aioredis standalone package not needed)
 redis>=5.0
-aioredis>=2.0
 
 # Database
 aiosqlite>=0.20

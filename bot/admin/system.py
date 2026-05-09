@@ -3,8 +3,7 @@ Admin: /system — system dashboard and controls.
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from bot.middleware.approval_gate import require_admin
-from bot.middleware.admin_gate import require_admin as require_admin_simple
+from bot.middleware.admin_gate import require_admin
 import os
 
 
@@ -68,7 +67,7 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-@require_admin_simple
+@require_admin
 async def cb_system_action(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     action = update.callback_query.data.split(':')[1]
     await update.callback_query.answer()

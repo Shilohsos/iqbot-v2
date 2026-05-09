@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- Accounts (IQ Option credentials)
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     email_encrypted TEXT NOT NULL,
     password_encrypted TEXT NOT NULL,
     ssid TEXT,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 -- Trades
 CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     pair TEXT NOT NULL,
     direction TEXT NOT NULL,
     amount REAL NOT NULL,

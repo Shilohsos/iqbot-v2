@@ -21,6 +21,7 @@ class UserWatcher:
         self.user_id = user_id
         self.client: IQOptionClient | None = None
         self.account = None
+        self._trade_listener_task: asyncio.Task | None = None
 
     async def start(self):
         self.account = get_account_credentials(self.user_id)
@@ -63,7 +64,11 @@ class UserWatcher:
             await self._handle_balance(data)
 
         # Listen for trade requests on Redis
-        asyncio.create_task(self._listen_trade_requests())
+        self._trade_listener_task = asyncio.create_task(self._listen_trade_requests())
+        self._trade_listener_task.add_done_callback(
+            lambda t: logger.error(f"Trade listener exited for user {self.user_id}: {t.exception()}")
+            if not t.cancelled() and t.exception() else None
+        )
 
         await self.client.run_forever()
 

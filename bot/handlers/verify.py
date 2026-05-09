@@ -26,12 +26,12 @@ async def msg_iq_id_submission(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data['awaiting_iq_id'] = False
     tg_id = update.effective_user.id
 
-    # ── SAVE IQ ID IMMEDIATELY — before any check ──
-    set_iq_user_id(tg_id, iq_id)
-
-    # Admin bypass — auto-approve
     user = get_user(tg_id)
+
+    # Admin bypass — auto-approve (check DB tier, but only admins already in env var
+    # can reach ADMIN tier, so this is safe for re-verification flows)
     if user and user['tier'] == 'ADMIN':
+        set_iq_user_id(tg_id, iq_id)
         set_iq_id_verified(tg_id, iq_id)
         approve_user(user['id'], 'ADMIN')
         log_funnel_event(tg_id, 'VERIFIED_ADMIN')
@@ -42,8 +42,11 @@ async def msg_iq_id_submission(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Try affiliate check
+    # Try affiliate check before persisting anything
     is_valid = await verify_iq_user_id(iq_id)
+
+    # Save IQ ID only after checks complete
+    set_iq_user_id(tg_id, iq_id)
 
     if not is_valid:
         # Mark referrer check failed but proceed to manual review

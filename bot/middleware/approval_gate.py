@@ -39,18 +39,6 @@ def require_approved(handler):
     return wrapper
 
 
-def require_admin(handler):
-    """Decorator — handler runs only if user is ADMIN."""
-    @wraps(handler)
-    async def wrapper(update, ctx, *args, **kwargs):
-        user = get_user(update.effective_user.id)
-        if not user or user['tier'] != 'ADMIN':
-            await _reply(update, "🔒 Admin only.")
-            return
-        return await handler(update, ctx, *args, **kwargs)
-    return wrapper
-
-
 async def _reply(update, text, **kwargs):
     if update.callback_query:
         await update.callback_query.answer()

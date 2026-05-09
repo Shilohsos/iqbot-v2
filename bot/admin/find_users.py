@@ -3,7 +3,7 @@ Admin: /find — find user by IQ ID, @username, or telegram ID.
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from bot.middleware.approval_gate import require_admin
+from bot.middleware.admin_gate import require_admin
 from database.models.users import find_user_full
 from core.currency import format_amount
 

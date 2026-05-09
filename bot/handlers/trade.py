@@ -18,6 +18,7 @@ from bot.ui.keyboards import (
     trade_pairs_keyboard, timeframe_keyboard,
     account_choice_keyboard, trade_result_keyboard,
 )
+from config import TIER_TRADE_LIMITS
 
 
 # ── Step 1: Open trade menu ──────────────────────────────────
@@ -98,20 +99,33 @@ async def msg_trade_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.user_data.get('awaiting_amount'):
         return
 
+    raw = update.message.text.strip()
     try:
-        amount = float(update.message.text.strip())
+        # Reject scientific notation (e.g. 1e10) before float conversion
+        if 'e' in raw.lower():
+            raise ValueError("scientific notation not allowed")
+        amount = float(raw)
     except ValueError:
-        await update.message.reply_text("Invalid amount. Send a number.")
+        await update.message.reply_text("Invalid amount. Send a plain number (e.g. 10 or 25.50).")
         return
 
     if amount <= 0:
         await update.message.reply_text("Amount must be positive.")
         return
 
+    user = get_user(update.effective_user.id)
+    limits = TIER_TRADE_LIMITS.get(user['tier'] if user else '', {})
+    min_amount = limits.get('min', 1)
+    max_amount = limits.get('max', 50)
+    if amount < min_amount or amount > max_amount:
+        await update.message.reply_text(
+            f"Amount must be between {min_amount} and {max_amount} for your tier."
+        )
+        return
+
     ctx.user_data['awaiting_amount'] = False
     ctx.user_data['trade_amount'] = amount
 
-    user = get_user(update.effective_user.id)
     summary = get_user_account_summary(user['id'])
     pair = ctx.user_data['trade_pair']
     tf = ctx.user_data['trade_timeframe']
