@@ -6,7 +6,10 @@ module.exports = {
       interpreter: 'python3',
       cwd: '/root/iqbot-v2',
       autorestart: true,
+      restart_delay: 3000,
       max_memory_restart: '500M',
+      out_file: '/root/iqbot-v2/logs/bot-out.log',
+      error_file: '/root/iqbot-v2/logs/bot-error.log',
       env: { NODE_ENV: 'production' },
     },
     {
@@ -15,7 +18,10 @@ module.exports = {
       interpreter: 'python3',
       cwd: '/root/iqbot-v2',
       autorestart: true,
+      restart_delay: 5000,
       max_memory_restart: '500M',
+      out_file: '/root/iqbot-v2/logs/bias-out.log',
+      error_file: '/root/iqbot-v2/logs/bias-error.log',
     },
     {
       name: 'iqbot-v2-affiliate-listener',
@@ -23,6 +29,9 @@ module.exports = {
       interpreter: 'python3',
       cwd: '/root/iqbot-v2',
       autorestart: true,
+      restart_delay: 5000,
+      out_file: '/root/iqbot-v2/logs/affiliate-out.log',
+      error_file: '/root/iqbot-v2/logs/affiliate-error.log',
     },
     // user watchers spawned dynamically via pm2_manager
   ]

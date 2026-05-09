@@ -81,4 +81,7 @@ def compute_macd(
         return (0.0, 0.0)
 
     signal_ema = compute_ema(valid_macd, signal)
-    return (valid_macd[-1], signal_ema[-1])
+    last_signal = signal_ema[-1]
+    if last_signal is None:
+        return (0.0, 0.0)
+    return (valid_macd[-1], last_signal)

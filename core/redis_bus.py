@@ -11,6 +11,9 @@ import json
 import os
 import redis.asyncio as aioredis
 from typing import Optional, Callable, Any
+from utils.logger import get_logger
+
+_log = get_logger("redis-bus")
 
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
 
@@ -44,8 +47,8 @@ async def subscribe(channel: str):
             if message['type'] == 'message':
                 try:
                     yield json.loads(message['data'])
-                except json.JSONDecodeError:
-                    yield message['data']
+                except json.JSONDecodeError as e:
+                    _log.warning(f"subscribe: bad JSON on {channel}, skipping: {e}")
     finally:
         await ps.unsubscribe(channel)
 
@@ -69,8 +72,9 @@ async def subscribe_once(
                     continue
                 try:
                     data = json.loads(message['data'])
-                except json.JSONDecodeError:
-                    data = message['data']
+                except json.JSONDecodeError as e:
+                    _log.warning(f"subscribe_once: bad JSON on {channel}, skipping: {e}")
+                    continue
                 if filter_fn is None or filter_fn(data):
                     return data
         finally:

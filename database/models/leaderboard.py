@@ -65,16 +65,21 @@ def clear_leaderboard(period: str = None):
 
 def publish_real_top_to_leaderboard(admin_id: int, period: str = 'ALL_TIME', limit: int = 10):
     real = get_top_real_traders(limit=limit)
-    clear_leaderboard(period=period)
     conn = get_connection()
-    for i, t in enumerate(real, 1):
-        name = f"@{t['telegram_username']}" if t['telegram_username'] else f"Trader#{t['iq_user_id']}"
-        conn.execute(
-            """INSERT INTO leaderboard
-               (rank, display_name, profit_amount, profit_currency, period, updated_by_admin)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (i, name, t['pnl'], 'USD', period, admin_id)
-        )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM leaderboard WHERE period = ?", (period,))
+        for i, t in enumerate(real, 1):
+            name = f"@{t['telegram_username']}" if t['telegram_username'] else f"Trader#{t['iq_user_id']}"
+            conn.execute(
+                """INSERT INTO leaderboard
+                   (rank, display_name, profit_amount, profit_currency, period, updated_by_admin)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (i, name, t['pnl'], 'USD', period, admin_id)
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
     return len(real)
