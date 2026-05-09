@@ -12,10 +12,13 @@ def calculate_bias(candles: list) -> Optional[dict]:
 
     Returns None if insufficient data (< 30 candles).
     """
-    if len(candles) < 30:
-        return None  # not enough data
+    if not candles or len(candles) < 30:
+        return None
 
-    closes = [c['close'] for c in candles]
+    try:
+        closes = [c['close'] for c in candles]
+    except (KeyError, TypeError):
+        return None
 
     # 1. RSI score: 0-100, where higher = more bullish
     rsi = compute_rsi(closes, period=14)

@@ -80,7 +80,7 @@ class IQOptionClient:
             lambda rid: msg_authenticate(self.ssid, rid),
             timeout=10, expect_data=False
         )
-        if isinstance(auth_result, dict) and not auth_result.get("success", True):
+        if isinstance(auth_result, dict) and not auth_result.get("success", False):
             raise RuntimeError(f"Authentication failed: {auth_result}")
         self.authenticated = True
         logger.info("Authenticated successfully")
@@ -227,6 +227,9 @@ class IQOptionClient:
             lambda rid: msg_subscribe_candles(active_id, timeframe, rid),
             timeout=5, expect_data=False
         )
+        if isinstance(result, dict) and result.get('success') is False:
+            logger.warning(f"Candle subscription rejected for {pair}@{timeframe}: {result}")
+            return False
         return True
 
     def on_candle_close(self, handler):
@@ -253,7 +256,7 @@ class IQOptionClient:
             lambda rid: msg_get_candles(active_id, timeframe, count, to_time, rid),
             timeout=15
         )
-        return result.get('candles', [])
+        return result.get('candles', []) if isinstance(result, dict) else []
 
     async def place_binary_option(
         self, pair: str, direction: str,
