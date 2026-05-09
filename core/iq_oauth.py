@@ -13,6 +13,7 @@ import os
 import secrets
 import time
 from typing import Optional
+from urllib.parse import urlencode
 
 import aiohttp
 
@@ -107,7 +108,7 @@ def build_authorize_url(
     if aff is not None:
         params.append(('aff', str(aff)))
 
-    qs = '&'.join(f'{k}={v}' for k, v in params)
+    qs = urlencode(params)
     return f"{OAUTH_BASE}{_AUTHORIZE_PATH}?{qs}"
 
 
