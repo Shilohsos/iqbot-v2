@@ -113,6 +113,31 @@ the live connection.
 
 ---
 
+### 🟡 #7 — "Find Users" Admin Button Does Not Work
+
+**Root Cause:** When admin clicks "Find Users" from the admin panel, the callback
+`adm:find_user_prompt` routes to `cmd_find()` with empty `ctx.args`. The function
+shows the prompt text but does **not** set `ctx.user_data['awaiting_find_query'] = True`.
+
+The text router in `main_bot.py` only routes typed text to `msg_find_query` if
+`awaiting_find_query` is set:
+
+```python
+# main_bot.py — text_router
+if ctx.user_data.get('awaiting_find_query'):
+    from bot.admin.find_users import msg_find_query
+    await msg_find_query(update, ctx)
+    return
+```
+
+Since the flag is never set, typing a username after clicking the button is
+ignored. Only `/find <query>` (command with args) works.
+
+**Fix:** Add `ctx.user_data['awaiting_find_query'] = True` in `cmd_find()` when
+`ctx.args` is empty and the function is showing the prompt.
+
+---
+
 ## Summary
 
 | # | Symptom | Root Cause | Impact |
@@ -123,3 +148,4 @@ the live connection.
 | 4 | Balance shows wrong amount | Admin has no account; stale DB for user 2 | Misleading UI |
 | 5 | No trade results | No position-changed events (trades never opened) | /history shows PENDING |
 | 6 | Balance never refreshes | Only WS push, no polling fallback | Stale balance data |
+| 7 | "Find Users" button broken | Clicking it doesn't set `awaiting_find_query` | Can't search by typing, only `/find` works |
