@@ -212,7 +212,7 @@ class IQOptionClient:
         microservice = msg.get("microserviceName")
         if microservice == "quotes" and name == "candle-generated":
             await self._dispatch_candle(body)
-        elif name == "position-changed":
+        elif name in ("position-changed", "portfolio.position-changed"):
             for h in self._position_handlers:
                 asyncio.create_task(h(body))
         elif name == "balance-changed":
