@@ -4,6 +4,9 @@ All tables created on first connection.
 """
 import sqlite3
 from config import DATABASE_PATH
+from utils.logger import get_logger
+
+_log = get_logger("db")
 
 SCHEMA = """
 -- Users
@@ -162,4 +165,4 @@ def init_db():
         conn.execute("ALTER TABLE accounts ADD COLUMN token_expires_at TEXT")
     conn.commit()
     conn.close()
-    print(f"Database initialized at {DATABASE_PATH}")
+    _log.info(f"Database initialized at {DATABASE_PATH}")

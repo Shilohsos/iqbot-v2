@@ -3,33 +3,33 @@ Leaderboard handler — shows top traders.
 """
 from telegram import Update
 from telegram.ext import ContextTypes
-from database.db import get_connection
+from database.models.leaderboard import get_top_real_traders
 from bot.middleware.approval_gate import require_approved
+from bot.ui.messages import reply_safe
+from bot.ui.keyboards import back_to_menu_keyboard
 
 
 @require_approved
 async def cmd_leaderboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    conn = get_connection()
-    rows = conn.execute(
-        """SELECT display_name, profit_amount, profit_currency, period
-           FROM leaderboard
-           ORDER BY rank ASC
-           LIMIT 10"""
-    ).fetchall()
-    conn.close()
+    rows = get_top_real_traders(limit=10)
 
     if not rows:
-        await update.message.reply_text("🏆 *Leaderboard*\n\nNo data yet.", parse_mode='Markdown')
+        await reply_safe(
+            update,
+            text="🏆 *Leaderboard*\n\nNo completed trades yet.",
+            parse_mode='Markdown',
+            reply_markup=back_to_menu_keyboard(),
+        )
         return
 
-    from core.currency import format_amount
-    text = "🏆 *Leaderboard*\n\n"
+    text = "🏆 *Top Traders*\n\n"
     for i, r in enumerate(rows, 1):
-        text += f"{i}. {r['display_name']} — {format_amount(r['profit_amount'], r['profit_currency'])}\n"
-    from bot.ui.messages import reply_safe
-    from bot.ui.keyboards import back_to_menu_keyboard
+        name = f"@{r['telegram_username']}" if r['telegram_username'] else f"Trader#{r['iq_user_id']}"
+        pnl = r['pnl']
+        sign = '+' if pnl >= 0 else ''
+        text += f"{i}. {name} — {sign}{pnl:,.2f} USD\n"
     await reply_safe(update, text=text, parse_mode='Markdown',
-                      reply_markup=back_to_menu_keyboard())
+                     reply_markup=back_to_menu_keyboard())
 
 
 @require_approved

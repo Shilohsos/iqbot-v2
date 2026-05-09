@@ -28,7 +28,8 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             procs = json.loads(r.stdout)
             for p in procs:
                 if p.get('name') == name:
-                    return p.get('pm2_env', {}).get('status', 'unknown').upper()
+                    status = p.get('pm2_env', {}).get('status') or 'unknown'
+                return status.upper()
         except Exception:
             pass
         return 'UNKNOWN'
@@ -88,8 +89,6 @@ async def cb_system_action(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
 
     if action == 'restart_bias':
-        from utils.pm2_manager import kill_watcher
-        # Restart bias via PM2
         import subprocess
         subprocess.run(['pm2', 'restart', 'iqbot-v2-bias-engine'], capture_output=True)
         await update.callback_query.edit_message_text("🔄 Bias engine restart triggered.")
