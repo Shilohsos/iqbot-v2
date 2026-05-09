@@ -4,6 +4,8 @@ Run: python3 main_bot.py
 PM2: iqbot-v2-bot
 """
 import asyncio
+import hashlib
+import hmac
 import signal
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -13,20 +15,42 @@ from aiohttp import web
 
 from database.db import init_db
 from database.models.funnel import log_funnel_event
-from config import BOT_TOKEN
+from config import BOT_TOKEN, LANDING_WEBHOOK_SECRET
 from utils.logger import get_logger
 
 logger = get_logger("main-bot")
 
+_WEBHOOK_SECRET_BYTES = LANDING_WEBHOOK_SECRET.encode() if LANDING_WEBHOOK_SECRET else None
+
 
 async def funnel_webhook(request: web.Request):
+    # Verify HMAC-SHA256 signature when secret is configured
+    if _WEBHOOK_SECRET_BYTES:
+        signature = request.headers.get('X-Signature', '')
+        body = await request.read()
+        expected = hmac.new(_WEBHOOK_SECRET_BYTES, body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            logger.warning("Funnel webhook rejected: invalid signature")
+            return web.Response(status=401, text='Unauthorized')
+        try:
+            import json
+            data = json.loads(body)
+        except Exception:
+            logger.warning("Funnel webhook rejected: invalid JSON")
+            return web.Response(status=400, text='Bad Request')
+    else:
+        try:
+            data = await request.json()
+        except Exception:
+            logger.warning("Funnel webhook rejected: invalid JSON")
+            return web.Response(status=400, text='Bad Request')
+
     try:
-        data = await request.json()
-        event_type = data.get('type', 'UNKNOWN')
-        metadata = str(data.get('metadata', {}))
+        event_type = str(data.get('type', 'UNKNOWN'))[:64]
+        metadata = str(data.get('metadata', {}))[:1024]
         log_funnel_event(None, event_type, metadata)
     except Exception:
-        pass
+        logger.exception("Funnel webhook: failed to log event")
     return web.Response(text='OK')
 
 

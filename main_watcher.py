@@ -23,5 +23,9 @@ if __name__ == '__main__':
     if len(sys.argv) < 2:
         print("Usage: python3 main_watcher.py <user_id>")
         sys.exit(1)
-    user_id = int(sys.argv[1])
+    try:
+        user_id = int(sys.argv[1])
+    except ValueError:
+        print(f"Error: user_id must be an integer, got: {sys.argv[1]!r}")
+        sys.exit(1)
     asyncio.run(main(user_id))

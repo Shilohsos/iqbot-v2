@@ -2,6 +2,9 @@
 Message templates and formatting helpers for the bot UI.
 """
 from core.currency import format_amount
+from utils.logger import get_logger
+
+_log = get_logger("ui")
 
 
 WELCOME_TEXT = """\
@@ -13,6 +16,20 @@ Powered by real-time market bias analysis and direct integration with IQ Option.
 
 Choose an option to begin:\
 """
+
+
+def md_escape(text: str) -> str:
+    """Escape Telegram MarkdownV1 metacharacters in untrusted text."""
+    if text is None:
+        return ''
+    return (
+        str(text)
+        .replace('\\', '\\\\')
+        .replace('_', '\\_')
+        .replace('*', '\\*')
+        .replace('`', '\\`')
+        .replace('[', '\\[')
+    )
 
 
 def format_bias_emoji(bullish: float) -> str:
@@ -58,14 +75,11 @@ async def reply_safe(update, text=None, **kwargs):
                 return await update.callback_query.edit_message_text(text=text, **kwargs)
             elif update.callback_query.message:
                 return await update.callback_query.edit_message_caption(caption=text, **kwargs)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.debug(f"reply_safe: edit failed, falling back to reply_text: {e}")
         if update.callback_query.message:
             return await update.callback_query.message.reply_text(text=text, **kwargs)
         return None
     elif update.message:
         return await update.message.reply_text(text=text, **kwargs)
-    elif update.effective_chat:
-        bot = update.get_bot()
-        return await bot.send_message(chat_id=update.effective_chat.id, text=text, **kwargs)
     return None

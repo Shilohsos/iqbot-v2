@@ -21,6 +21,7 @@ class UserWatcher:
         self.user_id = user_id
         self.client: IQOptionClient | None = None
         self.account = None
+        self._trade_listener_task: asyncio.Task | None = None
 
     async def start(self):
         self.account = get_account_credentials(self.user_id)
@@ -49,10 +50,15 @@ class UserWatcher:
                 bal.get('currency', 'USD')
             )
 
-        # Subscribe to position + balance changes
-        await self.client.ws.send(msg_subscribe_position_state(gen_request_id()))
+        # Subscribe to position + balance changes (fire-and-forget; confirmations
+        # arrive as normal WebSocket messages and are logged by the client)
+        req_id = gen_request_id()
+        await self.client.ws.send(msg_subscribe_position_state(req_id))
+        logger.info(f"Sent position-state subscription (req_id={req_id}) for user {self.user_id}")
         for bal_id in self.client.balances:
-            await self.client.ws.send(msg_subscribe_balance(bal_id, gen_request_id()))
+            req_id = gen_request_id()
+            await self.client.ws.send(msg_subscribe_balance(bal_id, req_id))
+            logger.info(f"Sent balance subscription bal_id={bal_id} (req_id={req_id}) for user {self.user_id}")
 
         @self.client.on_position_changed
         async def handle_position(data):
@@ -62,10 +68,24 @@ class UserWatcher:
         async def handle_balance(data):
             await self._handle_balance(data)
 
-        # Listen for trade requests on Redis
-        asyncio.create_task(self._listen_trade_requests())
+        # Listen for trade requests on Redis (auto-restart on crash so a single
+        # transient error doesn't permanently kill trade execution for this user)
+        self._trade_listener_task = asyncio.create_task(self._supervise_trade_listener())
 
         await self.client.run_forever()
+
+    async def _supervise_trade_listener(self):
+        backoff = 1
+        while True:
+            try:
+                await self._listen_trade_requests()
+                logger.warning(f"Trade listener returned cleanly for user {self.user_id}; restarting")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.exception(f"Trade listener crashed for user {self.user_id}: {e}")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
 
     async def _listen_trade_requests(self):
         async for msg in subscribe(f'trade-requests:{self.user_id}'):

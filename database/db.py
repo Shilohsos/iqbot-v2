@@ -3,7 +3,6 @@ Database connection and schema initialization.
 All tables created on first connection.
 """
 import sqlite3
-import aiosqlite
 from config import DATABASE_PATH
 
 SCHEMA = """
@@ -26,7 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- Accounts (IQ Option credentials)
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     email_encrypted TEXT NOT NULL,
     password_encrypted TEXT NOT NULL,
     ssid TEXT,
@@ -45,7 +44,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 -- Trades
 CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     pair TEXT NOT NULL,
     direction TEXT NOT NULL,
     amount REAL NOT NULL,
@@ -73,6 +72,7 @@ CREATE TABLE IF NOT EXISTS market_bias (
     macd_signal TEXT,
     last_close REAL,
     candles_used INTEGER,
+    is_suspended INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(asset, timeframe_seconds)
 );
@@ -143,19 +143,14 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-async def get_async_connection() -> aiosqlite.Connection:
-    """Get an async SQLite connection."""
-    conn = await aiosqlite.connect(DATABASE_PATH)
-    conn.row_factory = aiosqlite.Row
-    await conn.execute("PRAGMA journal_mode=WAL")
-    await conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 def init_db():
     """Initialize schema. Safe to call multiple times."""
     conn = get_connection()
     conn.executescript(SCHEMA)
+    # Migration: add is_suspended if upgrading from older schema
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_bias)")}
+    if 'is_suspended' not in cols:
+        conn.execute("ALTER TABLE market_bias ADD COLUMN is_suspended INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
     print(f"Database initialized at {DATABASE_PATH}")

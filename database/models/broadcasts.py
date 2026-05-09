@@ -8,24 +8,27 @@ def log_broadcast(
     button_text: str = None, button_url: str = None
 ) -> int:
     conn = get_connection()
-    cursor = conn.execute(
-        """INSERT INTO broadcasts
-           (admin_id, target_segment, message_text, image_path,
-            button_text, button_url, sent_count, sent_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
-        (admin_id, target_segment, message_text, image_path,
-         button_text, button_url, sent_count)
-    )
-    conn.commit()
-    bid = cursor.lastrowid
-    conn.close()
-    return bid
+    try:
+        cursor = conn.execute(
+            """INSERT INTO broadcasts
+               (admin_id, target_segment, message_text, image_path,
+                button_text, button_url, sent_count, sent_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (admin_id, target_segment, message_text, image_path,
+             button_text, button_url, sent_count)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
 
 
 def update_broadcast_count(broadcast_id: int, count: int):
     conn = get_connection()
-    conn.execute(
-        "UPDATE broadcasts SET sent_count=? WHERE id=?", (count, broadcast_id)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE broadcasts SET sent_count=? WHERE id=?", (count, broadcast_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()

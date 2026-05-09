@@ -3,7 +3,7 @@ Admin: /today — aggregated dashboard.
 """
 from telegram import Update
 from telegram.ext import ContextTypes
-from bot.middleware.approval_gate import require_admin
+from bot.middleware.admin_gate import require_admin
 from database.models.trades import get_daily_summary, get_per_user_today
 from core.currency import format_amount
 

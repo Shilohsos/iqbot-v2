@@ -14,32 +14,37 @@ def upsert_bias(
     macd_signal: str = None,
     last_close: float = None,
     candles_used: int = None,
+    is_suspended: bool = False,
 ):
     conn = get_connection()
-    conn.execute(
-        """INSERT OR REPLACE INTO market_bias
-           (asset, timeframe_seconds, bullish_percent, bearish_percent,
-            confidence, rsi_value, ema_signal, macd_signal, last_close,
-            candles_used, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
-        (asset, timeframe_seconds, bullish_percent, bearish_percent,
-         confidence, rsi_value, ema_signal, macd_signal, last_close,
-         candles_used)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO market_bias
+               (asset, timeframe_seconds, bullish_percent, bearish_percent,
+                confidence, rsi_value, ema_signal, macd_signal, last_close,
+                candles_used, is_suspended, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (asset, timeframe_seconds, bullish_percent, bearish_percent,
+             confidence, rsi_value, ema_signal, macd_signal, last_close,
+             candles_used, 1 if is_suspended else 0)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_current_bias(pair: str, timeframe_seconds: int) -> Optional[dict]:
     conn = get_connection()
-    row = conn.execute(
-        """SELECT * FROM market_bias
-           WHERE asset=? AND timeframe_seconds=?
-           ORDER BY updated_at DESC LIMIT 1""",
-        (pair, timeframe_seconds)
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        row = conn.execute(
+            """SELECT * FROM market_bias
+               WHERE asset=? AND timeframe_seconds=?
+               ORDER BY updated_at DESC LIMIT 1""",
+            (pair, timeframe_seconds)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
 
 
 def get_top_pairs_by_confidence(
@@ -49,7 +54,7 @@ def get_top_pairs_by_confidence(
     conn = get_connection()
     rows = conn.execute(
         """SELECT * FROM market_bias
-           WHERE timeframe_seconds=?
+           WHERE timeframe_seconds=? AND is_suspended=0
            ORDER BY confidence DESC
            LIMIT ?""",
         (timeframe, limit)

@@ -12,10 +12,13 @@ def calculate_bias(candles: list) -> Optional[dict]:
 
     Returns None if insufficient data (< 30 candles).
     """
-    if len(candles) < 30:
-        return None  # not enough data
+    if not candles or len(candles) < 30:
+        return None
 
-    closes = [c['close'] for c in candles]
+    try:
+        closes = [c['close'] for c in candles]
+    except (KeyError, TypeError):
+        return None
 
     # 1. RSI score: 0-100, where higher = more bullish
     rsi = compute_rsi(closes, period=14)
@@ -28,11 +31,11 @@ def calculate_bias(candles: list) -> Optional[dict]:
     ema21 = ema21_list[-1]
 
     if ema9 > ema21:
-        diff_pct = abs(ema9 - ema21) / closes[-1] * 1000 if closes[-1] else 0
+        diff_pct = abs(ema9 - ema21) / closes[-1] * 100 if closes[-1] else 0
         ema_score = 70 + min(30, diff_pct)
         ema_signal = 'BULL'
     elif ema9 < ema21:
-        diff_pct = abs(ema9 - ema21) / closes[-1] * 1000 if closes[-1] else 0
+        diff_pct = abs(ema9 - ema21) / closes[-1] * 100 if closes[-1] else 0
         ema_score = 30 - min(30, diff_pct)
         ema_signal = 'BEAR'
     else:

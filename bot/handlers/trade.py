@@ -4,7 +4,7 @@ Multi-step: pair → timeframe → amount → confirm → execute → result.
 """
 import asyncio
 import uuid
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from core.redis_bus import publish, subscribe_once
 from database.models.bias import get_top_pairs_by_confidence
@@ -12,12 +12,13 @@ from database.models.users import get_user
 from database.models.accounts import get_user_account_summary
 from bot.middleware.approval_gate import require_approved
 from bot.ui.images import send_image_with_caption
-from bot.ui.messages import format_bias_emoji, format_pnl
+from bot.ui.messages import format_bias_emoji, format_pnl, reply_safe
 from core.currency import format_amount
 from bot.ui.keyboards import (
     trade_pairs_keyboard, timeframe_keyboard,
     account_choice_keyboard, trade_result_keyboard,
 )
+from config import TIER_TRADE_LIMITS
 
 
 # ── Step 1: Open trade menu ──────────────────────────────────
@@ -39,7 +40,6 @@ async def cmd_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    from bot.ui.messages import reply_safe, format_bias_emoji
     keyboard = []
     for pair_info in top_pairs:
         pair = pair_info['asset']
@@ -97,21 +97,36 @@ async def cb_select_timeframe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def msg_trade_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.user_data.get('awaiting_amount'):
         return
+    if not update.message or not update.message.text:
+        return
 
+    raw = update.message.text.strip()
     try:
-        amount = float(update.message.text.strip())
+        # Reject scientific notation (e.g. 1e10) before float conversion
+        if 'e' in raw.lower():
+            raise ValueError("scientific notation not allowed")
+        amount = float(raw)
     except ValueError:
-        await update.message.reply_text("Invalid amount. Send a number.")
+        await update.message.reply_text("Invalid amount. Send a plain number (e.g. 10 or 25.50).")
         return
 
     if amount <= 0:
         await update.message.reply_text("Amount must be positive.")
         return
 
+    user = get_user(update.effective_user.id)
+    limits = TIER_TRADE_LIMITS.get(user['tier'] if user else '', {})
+    min_amount = limits.get('min', 1)
+    max_amount = limits.get('max', 50)
+    if amount < min_amount or amount > max_amount:
+        await update.message.reply_text(
+            f"Amount must be between {min_amount} and {max_amount} for your tier."
+        )
+        return
+
     ctx.user_data['awaiting_amount'] = False
     ctx.user_data['trade_amount'] = amount
 
-    user = get_user(update.effective_user.id)
     summary = get_user_account_summary(user['id'])
     pair = ctx.user_data['trade_pair']
     tf = ctx.user_data['trade_timeframe']
@@ -138,6 +153,20 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     pair = ctx.user_data['trade_pair']
     tf = ctx.user_data['trade_timeframe']
     amount = ctx.user_data['trade_amount']
+
+    # Check sufficient balance before sending to watcher
+    summary = get_user_account_summary(user['id'])
+    available = (
+        summary['practice_balance'] if balance_type == 'PRACTICE'
+        else summary['real_balance']
+    )
+    if available < amount:
+        await update.callback_query.answer("Insufficient balance.", show_alert=True)
+        await update.callback_query.edit_message_text(
+            f"❌ Insufficient balance. Available: `{available:.2f}`, needed: `{amount}`.",
+            parse_mode='Markdown',
+        )
+        return
 
     await update.callback_query.answer("Placing trade...")
     await update.callback_query.edit_message_text(

@@ -13,10 +13,11 @@ def _get_fernet() -> Fernet:
     if _KEY is None:
         key = os.getenv('FERNET_KEY')
         if not key:
-            # Generate one on first use if env var not set
-            key = Fernet.generate_key().decode()
-            print(f"WARNING: FERNET_KEY not set. Generated: {key}")
-            print("Save this in your .env file!")
+            raise RuntimeError(
+                "FERNET_KEY environment variable is not set. "
+                "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" "
+                "and add it to your .env file."
+            )
         _KEY = Fernet(key.encode())
     return _KEY
 

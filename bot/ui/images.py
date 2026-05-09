@@ -5,7 +5,7 @@ Uses static assets from /root/iqbot-v2/assets/.
 import os
 from telegram import Bot
 
-ASSETS_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'assets')
+ASSETS_DIR = os.path.join(os.path.dirname(__file__), '..', '..')
 
 
 async def send_image_with_caption(bot: Bot, chat_id: int, image_path: str,

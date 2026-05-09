@@ -8,6 +8,9 @@ from database.models.users import get_user
 from database.models.accounts import add_account
 from core.encryption import encrypt_credential
 from bot.middleware.approval_gate import require_approved
+from utils.logger import get_logger
+
+logger = get_logger("onboard")
 
 EMAIL, PASSWORD = range(2)
 
@@ -48,8 +51,8 @@ async def receive_password(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Delete the password message immediately
     try:
         await update.message.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Could not delete password message for user {update.effective_user.id}: {e}")
 
     user = get_user(update.effective_user.id)
 
@@ -76,8 +79,16 @@ async def receive_password(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         platform_id=int(os.getenv('PLATFORM_ID', '0'))
     )
 
-    from database.models.users import log_funnel_event
+    from database.models.funnel import log_funnel_event
     log_funnel_event(update.effective_user.id, 'ADDED_ACCOUNT')
+
+    # Spawn watcher process for this approved user (now that they have credentials)
+    try:
+        from utils.pm2_manager import spawn_watcher
+        if not spawn_watcher(user['id']):
+            logger.error(f"Failed to spawn watcher for user_id={user['id']}")
+    except Exception as e:
+        logger.error(f"spawn_watcher raised for user_id={user['id']}: {e}")
 
     await update.message.reply_text(
         "✅ *Account connected. Watcher is now starting up.*\n\n"
