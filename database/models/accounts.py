@@ -56,16 +56,15 @@ def get_user_account_summary(user_id: int) -> dict:
     }
 
 
-def update_balance(user_id: int, balance_id: int, amount: float, currency: str = 'USD'):
+def update_balance(user_id: int, balance_type: int, amount: float, currency: str = 'USD'):
+    """Update balance by type: 1=Real, 4=Practice."""
     conn = get_connection()
     try:
-        row = conn.execute(
-            "SELECT * FROM accounts WHERE user_id=? AND is_active=1", (user_id,)
-        ).fetchone()
-        if not row:
+        if not conn.execute(
+            "SELECT 1 FROM accounts WHERE user_id=? AND is_active=1", (user_id,)
+        ).fetchone():
             return
-        r = dict(row)
-        if balance_id == r.get('real_balance_id'):
+        if balance_type == 1:
             conn.execute(
                 """UPDATE accounts
                    SET real_balance_amount=?, real_balance_currency=?

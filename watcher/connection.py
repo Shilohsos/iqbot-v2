@@ -42,12 +42,13 @@ class UserWatcher:
         )
         await self.client.connect()
 
-        # Sync initial balance to DB
-        for bal_id, bal in self.client.balances.items():
+        # Sync initial balance to DB (type 1=Real, 4=Practice)
+        for bal in self.client.balances.values():
             update_balance(
-                self.user_id, bal_id,
+                self.user_id,
+                bal.get('type', 4),
                 bal.get('amount', 0),
-                bal.get('currency', 'USD')
+                bal.get('currency', 'USD'),
             )
 
         # Subscribe to position + balance changes (fire-and-forget; confirmations
@@ -200,7 +201,7 @@ class UserWatcher:
     async def _handle_balance(self, data):
         update_balance(
             self.user_id,
-            data['user_balance_id'],
+            data.get('type', 4),
             data['amount'],
             data.get('currency', 'USD'),
         )

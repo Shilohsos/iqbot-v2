@@ -45,7 +45,7 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     bias_count = conn.execute("SELECT COUNT(*) FROM market_bias").fetchone()[0]
     conn.close()
 
-    bias_status = pm2_status('iqbot-v2-bias-engine')
+    bias_status = pm2_status('iqbot-v2-bias')
     bot_status = pm2_status('iqbot-v2-bot')
 
     # Real Redis connectivity check
@@ -90,12 +90,12 @@ async def cb_system_action(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if action == 'restart_bias':
         import subprocess
-        subprocess.run(['pm2', 'restart', 'iqbot-v2-bias-engine'], capture_output=True)
+        subprocess.run(['pm2', 'restart', 'iqbot-v2-bias'], capture_output=True)
         await update.callback_query.edit_message_text("🔄 Bias engine restart triggered.")
 
     elif action == 'view_logs':
         await update.callback_query.edit_message_text(
-            "📋 Run `pm2 logs iqbot-v2-bias-engine` on the VPS for live logs."
+            "📋 Run `pm2 logs iqbot-v2-bias` on the VPS for live logs."
         )
 
     elif action == 'cleanup':
