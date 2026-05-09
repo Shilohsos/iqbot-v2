@@ -4,7 +4,7 @@ Multi-step: pair → timeframe → amount → confirm → execute → result.
 """
 import asyncio
 import uuid
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from core.redis_bus import publish, subscribe_once
 from database.models.bias import get_top_pairs_by_confidence
@@ -12,7 +12,7 @@ from database.models.users import get_user
 from database.models.accounts import get_user_account_summary
 from bot.middleware.approval_gate import require_approved
 from bot.ui.images import send_image_with_caption
-from bot.ui.messages import format_bias_emoji, format_pnl
+from bot.ui.messages import format_bias_emoji, format_pnl, reply_safe
 from core.currency import format_amount
 from bot.ui.keyboards import (
     trade_pairs_keyboard, timeframe_keyboard,
@@ -40,7 +40,6 @@ async def cmd_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    from bot.ui.messages import reply_safe, format_bias_emoji
     keyboard = []
     for pair_info in top_pairs:
         pair = pair_info['asset']
