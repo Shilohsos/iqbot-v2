@@ -97,6 +97,8 @@ async def cb_select_timeframe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def msg_trade_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.user_data.get('awaiting_amount'):
         return
+    if not update.message or not update.message.text:
+        return
 
     raw = update.message.text.strip()
     try:

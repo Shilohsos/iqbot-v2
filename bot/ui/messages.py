@@ -18,6 +18,20 @@ Choose an option to begin:\
 """
 
 
+def md_escape(text: str) -> str:
+    """Escape Telegram MarkdownV1 metacharacters in untrusted text."""
+    if text is None:
+        return ''
+    return (
+        str(text)
+        .replace('\\', '\\\\')
+        .replace('_', '\\_')
+        .replace('*', '\\*')
+        .replace('`', '\\`')
+        .replace('[', '\\[')
+    )
+
+
 def format_bias_emoji(bullish: float) -> str:
     if bullish >= 55:
         return '🟢'

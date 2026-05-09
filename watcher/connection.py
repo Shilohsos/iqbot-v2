@@ -68,14 +68,24 @@ class UserWatcher:
         async def handle_balance(data):
             await self._handle_balance(data)
 
-        # Listen for trade requests on Redis
-        self._trade_listener_task = asyncio.create_task(self._listen_trade_requests())
-        self._trade_listener_task.add_done_callback(
-            lambda t: logger.error(f"Trade listener exited for user {self.user_id}: {t.exception()}")
-            if not t.cancelled() and t.exception() else None
-        )
+        # Listen for trade requests on Redis (auto-restart on crash so a single
+        # transient error doesn't permanently kill trade execution for this user)
+        self._trade_listener_task = asyncio.create_task(self._supervise_trade_listener())
 
         await self.client.run_forever()
+
+    async def _supervise_trade_listener(self):
+        backoff = 1
+        while True:
+            try:
+                await self._listen_trade_requests()
+                logger.warning(f"Trade listener returned cleanly for user {self.user_id}; restarting")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.exception(f"Trade listener crashed for user {self.user_id}: {e}")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
 
     async def _listen_trade_requests(self):
         async for msg in subscribe(f'trade-requests:{self.user_id}'):

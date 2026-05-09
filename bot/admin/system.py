@@ -34,7 +34,11 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return 'UNKNOWN'
 
     conn = get_connection()
-    db_size = os.path.getsize('/root/iqbot-v2/iqbot.db') / (1024 * 1024)
+    from config import DATABASE_PATH
+    try:
+        db_size = os.path.getsize(DATABASE_PATH) / (1024 * 1024)
+    except OSError:
+        db_size = 0.0
     trades_count = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
     users_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     bias_count = conn.execute("SELECT COUNT(*) FROM market_bias").fetchone()[0]

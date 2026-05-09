@@ -4,9 +4,10 @@ IQ Option User ID verification handler.
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database.models.users import (
-    set_iq_id_verified, set_rejection, log_funnel_event,
+    set_iq_id_verified, set_rejection,
     get_user, approve_user, set_iq_user_id, set_referrer_check_passed,
 )
+from database.models.funnel import log_funnel_event
 from bot.ui.images import send_image_with_caption
 from utils.affiliate_check import verify_iq_user_id
 from config import AFFILIATE_LINK

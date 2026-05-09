@@ -79,8 +79,16 @@ async def receive_password(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         platform_id=int(os.getenv('PLATFORM_ID', '0'))
     )
 
-    from database.models.users import log_funnel_event
+    from database.models.funnel import log_funnel_event
     log_funnel_event(update.effective_user.id, 'ADDED_ACCOUNT')
+
+    # Spawn watcher process for this approved user (now that they have credentials)
+    try:
+        from utils.pm2_manager import spawn_watcher
+        if not spawn_watcher(user['id']):
+            logger.error(f"Failed to spawn watcher for user_id={user['id']}")
+    except Exception as e:
+        logger.error(f"spawn_watcher raised for user_id={user['id']}: {e}")
 
     await update.message.reply_text(
         "✅ *Account connected. Watcher is now starting up.*\n\n"

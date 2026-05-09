@@ -12,7 +12,7 @@ python-telegram-bot>=21.0
 redis>=5.0
 
 # Database
-aiosqlite>=0.20
+# (sqlite3 is in the stdlib; aiosqlite removed — only sync access used)
 
 # PM2 management
 # (system-level, not pip)

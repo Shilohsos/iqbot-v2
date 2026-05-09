@@ -49,6 +49,7 @@ class IQOptionClient:
         self._server_time = None
         self._server_time_local = None
         self._connecting = False
+        self._receive_task: asyncio.Task | None = None
 
     async def _request(self, msg_fn, *args, timeout: float = 10, expect_data: bool = True):
         """Send a request and wait for response. expect_data=True means wait for data (not just ACK)."""
@@ -56,8 +57,14 @@ class IQOptionClient:
         fut = asyncio.get_event_loop().create_future()
         self._pending[rid] = fut
         self._pending_data[rid] = expect_data
-        await self.ws.send(msg_fn(rid, *args) if args else msg_fn(rid))
-        return await asyncio.wait_for(fut, timeout=timeout)
+        try:
+            await self.ws.send(msg_fn(rid, *args) if args else msg_fn(rid))
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except (asyncio.TimeoutError, Exception):
+            # Drop the orphaned future so _pending doesn't grow without bound
+            self._pending.pop(rid, None)
+            self._pending_data.pop(rid, None)
+            raise
 
     async def connect(self):
         """Connect, authenticate, send setOptions, fetch initialization data."""
@@ -72,8 +79,11 @@ class IQOptionClient:
         self.ws = await websockets.connect(WS_URL, additional_headers=headers, max_size=5 * 1024 * 1024)
         self.connected = True
 
-        # Start receive loop
-        asyncio.create_task(self._receive_loop())
+        # Cancel any prior receive loop before starting a new one (prevents
+        # double-spawn on reconnect — both loops would fight over _pending)
+        if self._receive_task and not self._receive_task.done():
+            self._receive_task.cancel()
+        self._receive_task = asyncio.create_task(self._receive_loop())
 
         # 1. Authenticate
         auth_result = await self._request(
@@ -112,6 +122,10 @@ class IQOptionClient:
 
     async def _refresh_initialization_data(self):
         init_data = await self._request(msg_get_initialization_data, timeout=10)
+
+        # Clear stale entries so a delisted/renamed asset doesn't linger after reconnect
+        self.actives.clear()
+        self.actives_by_name.clear()
 
         # Parse actives — they're dicts keyed by string IDs
         for atype in ['turbo', 'binary', 'blitz']:

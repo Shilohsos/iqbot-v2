@@ -3,7 +3,6 @@ Database connection and schema initialization.
 All tables created on first connection.
 """
 import sqlite3
-import aiosqlite
 from config import DATABASE_PATH
 
 SCHEMA = """
@@ -141,15 +140,6 @@ def get_connection() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-async def get_async_connection() -> aiosqlite.Connection:
-    """Get an async SQLite connection."""
-    conn = await aiosqlite.connect(DATABASE_PATH)
-    conn.row_factory = aiosqlite.Row
-    await conn.execute("PRAGMA journal_mode=WAL")
-    await conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 

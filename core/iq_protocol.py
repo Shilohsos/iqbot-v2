@@ -11,7 +11,7 @@ WS_URL = "wss://iqoption.com/echo/websocket"
 
 
 def gen_request_id() -> str:
-    return uuid.uuid4().hex[:16]
+    return uuid.uuid4().hex
 
 
 def msg_authenticate(ssid: str, request_id: str) -> str:
