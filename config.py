@@ -1,0 +1,44 @@
+"""
+Static configuration for IQBot v2.
+"""
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── Bias Engine ─────────────────────
+BIAS_PAIRS = [
+    "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
+    "EURJPY-OTC", "EURGBP-OTC", "USDCAD-OTC", "USDCHF-OTC",
+    "NZDUSD-OTC", "GBPJPY-OTC", "AUDCAD-OTC", "AUDJPY-OTC",
+]
+
+BIAS_TIMEFRAMES = [30, 60, 300, 600]  # 30s, 1m, 5m, 10m
+
+BIAS_API_CREDENTIALS = {
+    'ssid': os.getenv('BIAS_ENGINE_SSID', ''),
+    'platform_id': int(os.getenv('PLATFORM_ID', '0')),
+}
+
+# ── Telegram ────────────────────────
+BOT_TOKEN = os.getenv('BOT_TOKEN', '')
+ADMIN_IDS = [
+    int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()
+]
+AFFILIATE_CHANNEL_ID = os.getenv('AFFILIATE_CHANNEL_ID', '')
+
+# ── Affiliate ───────────────────────
+AFFILIATE_LINK = os.getenv('AFFILIATE_LINK', 'https://iqoption.com/?aff=YOUR_ID')
+
+# ── Tiers ───────────────────────────
+DEFAULT_TIER = 'PENDING'
+TIER_TRADE_LIMITS = {
+    'NEWBIE': {'min': 1, 'max': 50, 'max_pairs': 4, 'timeframes': [30, 60, 300]},
+    'PRO': {'min': 1, 'max': 500, 'max_pairs': 8, 'timeframes': [30, 60, 300, 600]},
+}
+
+# ── Database ────────────────────────
+DATABASE_PATH = os.getenv('IQBOT_DB_PATH', '/root/iqbot-v2/iqbot.db')
+
+# ── Funnel ──────────────────────────
+LANDING_WEBHOOK_SECRET = os.getenv('LANDING_WEBHOOK_SECRET', '')

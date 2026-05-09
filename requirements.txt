@@ -1,0 +1,24 @@
+# IQBot v2 Requirements
+# Core
+websockets>=13.0
+python-dotenv>=1.0
+cryptography>=43.0
+aiohttp>=3.10
+
+# Telegram Bot
+python-telegram-bot>=21.0
+
+# Redis
+redis>=5.0
+aioredis>=2.0
+
+# Database
+aiosqlite>=0.20
+
+# PM2 management
+# (system-level, not pip)
+
+# Affiliate listener
+telethon>=1.37
+
+# Utils
