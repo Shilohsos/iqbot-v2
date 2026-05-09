@@ -26,11 +26,13 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    email_encrypted TEXT NOT NULL,
-    password_encrypted TEXT NOT NULL,
+    email_encrypted TEXT NOT NULL DEFAULT '',
+    password_encrypted TEXT NOT NULL DEFAULT '',
     ssid TEXT,
     ssid_at TEXT,
     platform_id INTEGER NOT NULL,
+    refresh_token TEXT,
+    token_expires_at TEXT,
     real_balance_id INTEGER,
     real_balance_amount REAL DEFAULT 0,
     real_balance_currency TEXT DEFAULT 'USD',
@@ -147,10 +149,17 @@ def init_db():
     """Initialize schema. Safe to call multiple times."""
     conn = get_connection()
     conn.executescript(SCHEMA)
-    # Migration: add is_suspended if upgrading from older schema
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(market_bias)")}
-    if 'is_suspended' not in cols:
-        conn.execute("ALTER TABLE market_bias ADD COLUMN is_suspended INTEGER NOT NULL DEFAULT 0")
+    # ── Inline migrations (idempotent via PRAGMA table_info checks) ──
+    bias_cols = {row[1] for row in conn.execute("PRAGMA table_info(market_bias)")}
+    if 'is_suspended' not in bias_cols:
+        conn.execute(
+            "ALTER TABLE market_bias ADD COLUMN is_suspended INTEGER NOT NULL DEFAULT 0"
+        )
+    acct_cols = {row[1] for row in conn.execute("PRAGMA table_info(accounts)")}
+    if 'refresh_token' not in acct_cols:
+        conn.execute("ALTER TABLE accounts ADD COLUMN refresh_token TEXT")
+    if 'token_expires_at' not in acct_cols:
+        conn.execute("ALTER TABLE accounts ADD COLUMN token_expires_at TEXT")
     conn.commit()
     conn.close()
     print(f"Database initialized at {DATABASE_PATH}")
