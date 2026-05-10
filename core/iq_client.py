@@ -245,6 +245,8 @@ class IQOptionClient:
         active_id = body.get('active_id')
         size = body.get('size')
         pair = self.actives.get(active_id, {}).get('name', f'unknown_{active_id}')
+        if pair.startswith('front.'):
+            pair = pair[6:]
         for h in self._candle_handlers:
             asyncio.create_task(h(pair, size, body))
 

@@ -168,6 +168,18 @@ class UserWatcher:
             balance_id=balance['id'],
         )
 
+        # IQ Option must return a valid trade ID — if not, the position-changed
+        # event can never be matched (WHERE iq_option_id=NULL never matches),
+        # leaving the trade stuck as PENDING forever.
+        trade_iq_id = result.get('id') if isinstance(result, dict) else None
+        if not trade_iq_id:
+            await publish(f'trade-results:{self.user_id}', {
+                'request_token': req['request_token'],
+                'status': 'ERROR',
+                'error': f'IQ Option returned no trade ID. Response: {result}',
+            })
+            return
+
         # Log to DB
         trade_id = log_trade(
             user_id=self.user_id,
@@ -175,9 +187,10 @@ class UserWatcher:
             direction=direction,
             amount=amount,
             duration_seconds=duration,
-            iq_option_id=result.get('id'),
+            iq_option_id=trade_iq_id,
             bias_at_entry=bias['bullish_percent'],
             confidence_at_entry=bias['confidence'],
+            balance_type=req.get('balance_type', 'PRACTICE'),
         )
 
         # Notify bot — trade opened

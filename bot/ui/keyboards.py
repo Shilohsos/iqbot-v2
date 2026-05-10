@@ -22,15 +22,13 @@ def trade_pairs_keyboard(pairs: list, include_cancel: bool = True) -> InlineKeyb
     return InlineKeyboardMarkup(keyboard)
 
 
-def timeframe_keyboard(include_cancel: bool = True) -> InlineKeyboardMarkup:
-    keyboard = [
-        [
-            InlineKeyboardButton("30s", callback_data='select_tf:30'),
-            InlineKeyboardButton("1m", callback_data='select_tf:60'),
-            InlineKeyboardButton("5m", callback_data='select_tf:300'),
-            InlineKeyboardButton("10m", callback_data='select_tf:600'),
-        ],
-    ]
+_TF_LABELS = {30: "30s", 60: "1m", 300: "5m", 600: "10m"}
+
+def timeframe_keyboard(allowed: list = None, include_cancel: bool = True) -> InlineKeyboardMarkup:
+    all_tfs = [30, 60, 300, 600]
+    tfs = [tf for tf in all_tfs if allowed is None or tf in allowed]
+    row = [InlineKeyboardButton(_TF_LABELS[tf], callback_data=f'select_tf:{tf}') for tf in tfs]
+    keyboard = [row]
     if include_cancel:
         keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data='cancel_trade')])
     return InlineKeyboardMarkup(keyboard)

@@ -29,7 +29,7 @@ async def cmd_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
     user = get_user(update.effective_user.id)
     top_pairs = get_top_pairs_by_confidence(
-        timeframe=300,
+        timeframe=60,
         limit=8 if user['tier'] == 'PRO' else 4
     )
 
@@ -71,10 +71,13 @@ async def cb_select_pair(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     pair = update.callback_query.data.split(':', 1)[1]
     ctx.user_data['trade_pair'] = pair
     await update.callback_query.answer()
+    user = get_user(update.effective_user.id)
+    tier = user.get('tier', 'NEWBIE') if user else 'NEWBIE'
+    allowed_tfs = TIER_TRADE_LIMITS.get(tier, TIER_TRADE_LIMITS.get('NEWBIE', {})).get('timeframes', [30, 60, 300])
     await update.callback_query.edit_message_text(
         f"*{pair}* selected.\n\nNow pick the *timeframe*:",
         parse_mode='Markdown',
-        reply_markup=timeframe_keyboard(),
+        reply_markup=timeframe_keyboard(allowed=allowed_tfs),
     )
 
 
@@ -207,6 +210,15 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except asyncio.TimeoutError:
         await update.callback_query.edit_message_text(
             "⚠️ Trade timed out. Please try again or contact admin."
+        )
+        return
+
+    if result['status'] == 'NO_BIAS':
+        await update.callback_query.edit_message_text(
+            f"⏳ *No market data yet for {pair}*\n\n"
+            f"The bias engine hasn't computed this pair/timeframe yet. "
+            f"Try again in 30–60 seconds or select a different timeframe.",
+            parse_mode='Markdown',
         )
         return
 
