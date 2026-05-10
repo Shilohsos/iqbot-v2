@@ -5,69 +5,55 @@
 
 ---
 
-## Round 3 — Balance & Bias Engine Issues (ACTIVE)
+## Current State
 
-### Issue #1: Live Balance Shows $0.00
+**Merged to master (commit `96e0d9b`):**
+- ✅ `claude/review-github-files-TyJZA` — bias UNKNOWN + balance fixes (partial)
+- ✅ `claude/fix-repo-issues-am3zk` — trade execution, result ID, tier timeframes
 
-**Symptom:** Telegram `/balance` shows Practice: $4,379.87 but Live: $0.00
+**Status after restart:**
 
-**DB state:**
-```
-user_id=2, practice_balance_amount=4379.87, real_balance_amount=0.0
-```
-
-**Watcher confirms 2 balances exist:**
-```
-07:56:48 Client ready. 2 balances, 286 actives
-07:56:48 Sent balance subscription bal_id=1223061988
-07:56:48 Sent balance subscription bal_id=1223061989
-```
-
-**Earlier watcher run (00:27:16) confirmed real balance exists:**
-```
-balance_sync: {"balance_type":1, "amount":4379.87}
-balance_sync: {"balance_type":4, "amount":8182.71}
-```
-
-**Root cause hypothesis:** The `update_balance()` function in `database/models/accounts.py` maps `balance_type == 1` to `real_balance_amount` and anything else to `practice_balance_amount`. But IQ Option may return different type values than expected, OR the watcher's `start()` loop is not calling `update_balance()` for both balance objects correctly.
-
-**Files to investigate:**
-- `database/models/accounts.py` — `update_balance()` (line 60)
-- `watcher/connection.py` — balance sync loop (lines 46-52)
-- `core/iq_client.py` — `_refresh_balances()` (line 117) — check what `bal['type']` values actually are
+| Fix | Status | Detail |
+|-----|--------|--------|
+| Bias engine UNKNOWN | ✅ Fixed | PM2 name `iqbot-v2-bias` |
+| Live balance $0.00 | ❌ Still broken | See below |
+| Trade result ID validation | ✅ Applied | |
+| Tier timeframes | ✅ Applied | |
+| NO_BIAS UX | ✅ Applied | |
 
 ---
 
-### Issue #2: Bias Engine Shows UNKNOWN
+## Remaining Issue: Live Balance $0.00
 
-**Symptom:** Telegram `/system` shows "Bias engine: UNKNOWN" even though `pm2 list` shows `iqbot-v2-bias` is ONLINE.
+**Root cause gap:**
 
-**Root cause:** `bot/admin/system.py` still references PM2 process name `iqbot-v2-bias-engine` (lines 54, 99, 104), but the actual PM2 process is named `iqbot-v2-bias`.
+The `update_balance()` function now matches `balance_id` against `real_balance_id` column:
 
 ```python
-# system.py line 54 — WRONG NAME:
-bias_status = pm2_status('iqbot-v2-bias-engine')
-
-# Should be:
-bias_status = pm2_status('iqbot-v2-bias')
+if balance_id == r.get('real_balance_id'):
+    # update real_balance_amount
+else:
+    # update practice_balance_amount
 ```
 
-**This fix was previously applied but LOST during the merge conflict resolution** of PR #4 (`df072b4`). The `git checkout --theirs` resolved the conflict by using the PR branch version which had the old name.
+But `real_balance_id` and `practice_balance_id` are **NULL** for all accounts:
 
-**Fix:** Change all 3 occurrences of `iqbot-v2-bias-engine` to `iqbot-v2-bias` in `bot/admin/system.py`.
+```
+user=2 real_bid=NULL practice_bid=NULL real_amt=$0.0 practice_amt=$4379.87
+```
 
----
+Since NULL never equals any balance_id, every balance update goes to `practice_balance_amount`.
 
-## Previous Rounds (RESOLVED)
+**Fix needed:** During watcher initialization (after `connect()`), the watcher must identify which balance is real vs practice by their `type` field (1=Real, 4=Practice) and store the balance IDs in the accounts table:
 
-### Round 2 — Trade Failures (Resolved by PR #4)
+```python
+# In watcher/connection.py start():
+for bal_id, bal in self.client.balances.items():
+    if bal.get('type') == 1:  # REAL
+        store_real_balance_id(user_id, bal_id)
+    elif bal.get('type') == 4:  # PRACTICE
+        store_practice_balance_id(user_id, bal_id)
+    update_balance(user_id, bal_id, bal['amount'], bal.get('currency', 'USD'))
+```
 
-All three fixes applied in `d9a7d2d`:
-1. ✅ `core/iq_client.py` — `self.connected = True` moved to after all init steps
-2. ✅ `watcher/connection.py` — `_subscribe_streams()` + `on_reconnect` for subscription replay
-3. ✅ `watcher/connection.py` — Pre-trade connection guard
-
-### Round 1 — Bot Crash Loop (Resolved)
-
-1. ✅ `ecosystem.config.js` — `restart_delay: 8000` + `kill_timeout: 10000`
-2. ✅ Missing pip packages installed
+Or alternatively, add a fallback in `update_balance()`: if `real_balance_id` is NULL, use `balance_type` (1 vs 4) to determine which column to update.
