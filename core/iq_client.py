@@ -215,6 +215,18 @@ class IQOptionClient:
         elif name in ("position-changed", "portfolio.position-changed"):
             for h in self._position_handlers:
                 asyncio.create_task(h(body))
+        elif name == "socket-option-closed":
+            # setOptions(sendResults=True) pushes these when a binary option closes.
+            # Normalise to the same shape that position-changed handlers expect.
+            win_str = body.get('win', 'loose')
+            normalized = {
+                'status': 'closed',
+                'external_id': body.get('id'),
+                'close_reason': win_str,
+                'close_profit': body.get('profit_amount', 0) if win_str == 'win' else 0,
+            }
+            for h in self._position_handlers:
+                asyncio.create_task(h(normalized))
         elif name == "balance-changed":
             for h in self._balance_handlers:
                 asyncio.create_task(h(body))

@@ -25,11 +25,17 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     def pm2_status(name):
         try:
             r = subprocess.run(['pm2', 'jlist'], capture_output=True, text=True, timeout=5)
-            procs = json.loads(r.stdout)
+            if r.returncode != 0:
+                return 'UNKNOWN'
+            stdout = r.stdout.strip()
+            # pm2 sometimes emits warning lines before the JSON array
+            start = stdout.find('[')
+            if start == -1:
+                return 'UNKNOWN'
+            procs = json.loads(stdout[start:])
             for p in procs:
                 if p.get('name') == name:
-                    status = p.get('pm2_env', {}).get('status') or 'unknown'
-                return status.upper()
+                    return (p.get('pm2_env', {}).get('status') or 'unknown').upper()
         except Exception:
             pass
         return 'UNKNOWN'
