@@ -16,9 +16,8 @@ from utils.logger import get_logger
 
 logger = get_logger("trade-executor")
 
-# IQ Option (especially OTC assets) closes the purchase window ~30 seconds
-# before candle close. If the next boundary is within this buffer, we skip
-# to the boundary after so the order is never rejected for timing.
+# Fallback purchase buffer when server-provided deadtime is unavailable.
+# IQ Option's actual deadtime per active comes from initialization data.
 PURCHASE_BUFFER_SECONDS = 30
 
 
@@ -76,18 +75,24 @@ async def execute_trade(
         if not active_id:
             return {"status": "ERROR", "error": f"Unknown pair: {pair}"}
 
+        # Extract server-provided deadtime and check trading session
+        option_type_id = 3 if duration_seconds <= 300 else 1  # 3=turbo, 1=binary
+        active_meta = _get_active_meta(init_data, active_id, option_type_id)
+        if not _can_trade_now(active_meta):
+            return {"status": "ERROR", "error": f"{pair} is currently suspended or outside trading hours"}
+        deadtime = active_meta["deadtime"]
+
         # 4. Subscribe to position updates (needed to receive position-changed events)
         rid = gen_request_id()
         await ws.send(msg_subscribe_position_state(rid))
 
         # 5. Place trade — retry once if IQ Option rejects for timing
-        option_type_id = 3 if duration_seconds <= 300 else 1  # 3=turbo, 1=binary
         profit_percent = _get_profit_percent(init_data, active_id, option_type_id)
         trade_iq_id = None
         last_error = "Trade rejected"
 
         for attempt in range(2):
-            expired_at = _aligned_expiry(int(time.time()), duration_seconds, option_type_id)
+            expired_at = _aligned_expiry(int(time.time()), duration_seconds, option_type_id, deadtime)
             rid = gen_request_id()
             logger.info(
                 f"Placing trade (attempt {attempt + 1}): pair={pair} active_id={active_id} "
@@ -255,21 +260,53 @@ async def _try_refresh_balances(ws):
         return None
 
 
-def _aligned_expiry(now: int, duration_seconds: int, option_type_id: int) -> int:
+def _get_active_meta(init_data: dict, active_id: int, option_type_id: int) -> dict:
+    """Extract deadtime, isSuspended, and schedule for an active from init_data."""
+    section = {3: "turbo", 1: "binary"}.get(option_type_id, "turbo")
+    active = init_data.get(section, {}).get("actives", {}).get(str(active_id), {})
+    # Server uses camelCase keys matching the TypeScript SDK DTO fields
+    deadtime = active.get("deadtime", active.get("dead_time", PURCHASE_BUFFER_SECONDS))
+    is_suspended = active.get("isSuspended", active.get("is_suspended", False))
+    schedule = active.get("schedule", [])
+    return {"deadtime": int(deadtime), "is_suspended": bool(is_suspended), "schedule": schedule}
+
+
+def _can_trade_now(active_meta: dict) -> bool:
+    """Return False if the active is suspended or outside its trading session."""
+    if active_meta.get("is_suspended"):
+        return False
+    schedule = active_meta.get("schedule", [])
+    if not schedule:
+        return True  # no schedule = 24/7 (typical for OTC assets)
+    now_ms = int(time.time() * 1000)
+    for session in schedule:
+        if isinstance(session, list) and len(session) >= 2:
+            from_ts, to_ts = int(session[0]) * 1000, int(session[1]) * 1000
+        elif isinstance(session, dict):
+            from_ts = int(session.get("from", 0)) * 1000
+            to_ts = int(session.get("to", 0)) * 1000
+        else:
+            continue
+        if from_ts <= now_ms <= to_ts:
+            return True
+    return False
+
+
+def _aligned_expiry(now: int, duration_seconds: int, option_type_id: int, deadtime: int = PURCHASE_BUFFER_SECONDS) -> int:
     """
-    IQ Option requires expiry timestamps to align to candle close boundaries.
+    Compute the next valid expiry timestamp.
 
-    Turbo (option_type_id=3): expiry must be a multiple of duration_seconds.
-        We pick the next such boundary; if it falls inside the purchase
-        cutoff window (~5s before close), we skip to the boundary after.
+    Turbo (type=3): must be a multiple of duration_seconds. The SDK generates
+        expiries as: now + size - (now % size). If the resulting boundary is
+        within deadtime seconds, skip to the next one (server rejects purchases
+        inside the deadtime window). The deadtime is active-specific and comes
+        from initialization data.
 
-    Binary (option_type_id=1): expiry must align to a minute boundary AND
-        must be at least duration_seconds away. Otherwise we'd send a 60s
-        expiry for a 15-minute trade.
+    Binary (type=1): must align to a minute boundary at least duration_seconds away.
     """
     if option_type_id == 3:
         next_boundary = ((now // duration_seconds) + 1) * duration_seconds
-        if next_boundary - now < PURCHASE_BUFFER_SECONDS:
+        if next_boundary - now <= deadtime:
             next_boundary += duration_seconds
         return next_boundary
     else:
