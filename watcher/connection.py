@@ -224,9 +224,12 @@ class UserWatcher:
         })
 
     async def _handle_balance(self, data):
+        # balance-changed events use 'balance_type' (1=Real, 4=Practice).
+        # Falling back to 'type' covers the initial balances dict format.
+        bal_type = data.get('balance_type', data.get('type', 4))
         update_balance(
             self.user_id,
-            data.get('type', 4),
+            bal_type,
             data['amount'],
             data.get('currency', 'USD'),
         )
