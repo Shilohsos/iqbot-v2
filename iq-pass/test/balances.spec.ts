@@ -1,0 +1,88 @@
+import {Balance, Balances, BalanceType, BinaryOptionsDirection, ClientSdk} from "../src";
+import {User, WS_URL} from "./vars";
+import {getUserByTitle} from "./utils/userUtils";
+import {waitForCondition} from "./utils/waiters";
+import {afterAll, beforeAll, describe, expect, it} from "vitest";
+import {getOAuthMethod} from "./utils/authHelper";
+
+describe('Balances', () => {
+    let sdk: ClientSdk;
+    let balances: Balances;
+    const user = getUserByTitle('balance_user') as User;
+
+    beforeAll(async () => {
+        const {oauth, options} = getOAuthMethod(user);
+        sdk = await ClientSdk.create(WS_URL, 82, oauth, options);
+        balances = await sdk.balances();
+    })
+
+    afterAll(async () => {
+        await sdk.shutdown();
+    });
+
+    function getBalance(type: BalanceType) {
+        const balance = balances.getBalances().find(value => value.type === type);
+        if (!balance) throw new Error(`${type} balance not found`);
+        return balance;
+    }
+
+    async function openOption(balance: Balance, amount: number) {
+        const options = await sdk.binaryOptions();
+        const activeInstruments = await options.getActives()
+            .filter(active => active.canBeBoughtAt(sdk.currentTime()))[0].instruments();
+        const availableInstruments = activeInstruments.getAvailableForBuyAt(sdk.currentTime());
+        const availableForBuyAt = availableInstruments
+            .filter(value => value.durationRemainingForPurchase(sdk.currentTime()) > 3000)[0];
+        await options.buy(availableForBuyAt, BinaryOptionsDirection.Put, amount, balance)
+    }
+
+    it('should be singleton object', async () => {
+        const {oauth, options} = getOAuthMethod(user);
+        sdk = await ClientSdk.create(WS_URL, 82, oauth, options);
+        const [balances1, balances2] = await Promise.all([
+            sdk.balances(),
+            sdk.balances(),
+        ]);
+        expect(balances1, "Balances facade differ").eq(balances2)
+    });
+
+    it('should reset demo balance', async () => {
+        const balance = getBalance(BalanceType.Demo);
+        const balanceAmount = balance.amount;
+        const defaultBalanceAmount = 10000;
+        const amount = balanceAmount - defaultBalanceAmount + 1;
+        const balanceAmountAfterOpen = balanceAmount - amount;
+        if (balanceAmount >= defaultBalanceAmount) {
+            await openOption(balance, amount);
+            await waitForCondition(() => balance.amount !== balanceAmount, 3000);
+            expect(balance.amount, "Balance amount should be changed").eq(balanceAmountAfterOpen);
+        }
+        await balance.resetDemoBalance();
+        await waitForCondition(() => balance.amount !== balanceAmountAfterOpen, 3000);
+        expect(balance.amount, "Resent is not working, balance wasn't changed").eq(defaultBalanceAmount);
+    });
+
+    it('balance should changed', async () => {
+        const user = getUserByTitle('balance_user1') as User;
+        const {oauth, options} = getOAuthMethod(user);
+        sdk = await ClientSdk.create(WS_URL, 82, oauth, options);
+        balances = await sdk.balances();
+        const balance = getBalance(BalanceType.Demo);
+        let balanceAmount: number = 0;
+        balances.subscribeOnUpdateBalance(balance.id, (balance) => {
+            balanceAmount = balance.amount;
+        })
+        await openOption(balance, 1);
+        expect(await waitForCondition(() => balanceAmount !== 0, 3000)).to.be.true;
+    });
+
+    it('error should be present when subscribe with invalid balance id', async () => {
+        expect(() => balances.subscribeOnUpdateBalance(123, () => {
+        })).toThrowError("balance with id '123' is not found")
+    });
+
+    it('cannot reset normal balance', async () => {
+        const balance = getBalance(BalanceType.Real);
+        await expect(balance.resetDemoBalance()).rejects.toThrow("Only demo balance can be reset")
+    });
+});

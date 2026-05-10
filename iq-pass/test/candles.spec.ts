@@ -1,0 +1,71 @@
+import {afterAll, beforeAll, describe, expect, it} from "vitest";
+import {Candles, ClientSdk} from "../src";
+import {User, WS_URL} from "./vars";
+import {getUserByTitle} from "./utils/userUtils";
+import {getOAuthMethod} from "./utils/authHelper";
+
+describe('Candles', () => {
+    let sdk: ClientSdk;
+    let candles: Candles;
+    const user = getUserByTitle('regular_user') as User;
+
+    beforeAll(async () => {
+        const {oauth, options} = getOAuthMethod(user);
+        sdk = await ClientSdk.create(WS_URL, 82, oauth, options);
+        candles = await sdk.candles();
+    })
+
+    afterAll(async () => {
+        await sdk.shutdown();
+    })
+
+    it('should be singleton object', async () => {
+        const {oauth, options} = getOAuthMethod(user);
+        sdk = await ClientSdk.create(WS_URL, 82, oauth, options);
+        const [candles1, candles2] = await Promise.all([
+            sdk.candles(),
+            sdk.candles(),
+        ]);
+        expect(candles1, "Candles facade differ").eq(candles2)
+    })
+
+    it('should return candles', async () => {
+        const binaryOptions = await sdk.binaryOptions();
+        const binaryOptionsActives = binaryOptions.getActives();
+        const binaryOptionsActive = binaryOptionsActives[0];
+        const activeId = binaryOptionsActive.id;
+        const size = 5;
+        const candleArray = await candles.getCandles(activeId, size);
+        expect(candleArray.length, "Invalid candle array length").to.be.above(0)
+        const candle = candleArray[Math.trunc(candleArray.length / 2)];
+        expect(candle.to - candle.from, "Invalid candle size").eq(size)
+    })
+
+    it('should return candles by filter', async () => {
+        const binaryOptions = await sdk.binaryOptions();
+        const binaryOptionsActives = binaryOptions.getActives();
+        const binaryOptionsActive = binaryOptionsActives[0];
+        const activeId = binaryOptionsActive.id;
+        const size = 15;
+        const from = Math.floor(Date.now() / 1000) - 5 * 60; // minus 35 minutes in seconds
+        const candleArray = await candles.getCandles(activeId, size, {
+            count: 3,
+            from: from,
+            onlyClosed: true,
+            kind: "mid",
+            backoff: 10,
+            splitNormalization: true
+        });
+        expect(candleArray.length, "Invalid candle array length").eq(3)
+        expect(candleArray[0].from, "Invalid first candle From time").eq(Math.ceil(from / size) * size)
+        const candle = candleArray[Math.trunc(candleArray.length / 2)];
+        expect(candle.to - candle.from, "Invalid candle size").eq(size)
+        expect(candle.at, "At must be undefined").to.be.undefined
+    })
+
+    it('should return error when from is in the future', async () => {
+        await expect(candles.getCandles(1, 1, {from: 4112672926})).rejects.toThrowError(
+            'request is failed with status 4220 and message: from: ["from must not be in the future"]'
+        );
+    })
+})
