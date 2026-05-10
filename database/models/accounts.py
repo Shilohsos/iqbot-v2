@@ -94,6 +94,49 @@ def deactivate_account(user_id: int):
         conn.close()
 
 
+def store_oauth_tokens(account_id: int, ssid: str, refresh_tok: str, expires_in: int):
+    """Persist SSID + refresh_token + expiry after a successful OAuth exchange."""
+    from datetime import datetime, timedelta
+    expires_at = (datetime.utcnow() + timedelta(seconds=expires_in)).isoformat()
+    conn = get_connection()
+    try:
+        conn.execute(
+            """UPDATE accounts
+               SET ssid=?, ssid_at=CURRENT_TIMESTAMP,
+                   refresh_token=?, token_expires_at=?
+               WHERE id=?""",
+            (ssid, refresh_tok, expires_at, account_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_oauth_account(
+    user_id: int,
+    ssid: str,
+    refresh_tok: str,
+    expires_in: int,
+    platform_id: int,
+) -> int:
+    """Create an account record for users who connected via OAuth (no stored password)."""
+    from datetime import datetime, timedelta
+    expires_at = (datetime.utcnow() + timedelta(seconds=expires_in)).isoformat()
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO accounts
+               (user_id, email_encrypted, password_encrypted,
+                ssid, ssid_at, platform_id, refresh_token, token_expires_at)
+               VALUES (?, '', '', ?, CURRENT_TIMESTAMP, ?, ?, ?)""",
+            (user_id, ssid, platform_id, refresh_tok, expires_at)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
 def update_ssid(account_id: int, ssid: str):
     conn = get_connection()
     try:

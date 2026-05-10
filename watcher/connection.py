@@ -51,15 +51,9 @@ class UserWatcher:
                 bal.get('currency', 'USD'),
             )
 
-        # Subscribe to position + balance changes (fire-and-forget; confirmations
-        # arrive as normal WebSocket messages and are logged by the client)
-        req_id = gen_request_id()
-        await self.client.ws.send(msg_subscribe_position_state(req_id))
-        logger.info(f"Sent position-state subscription (req_id={req_id}) for user {self.user_id}")
-        for bal_id in self.client.balances:
-            req_id = gen_request_id()
-            await self.client.ws.send(msg_subscribe_balance(bal_id, req_id))
-            logger.info(f"Sent balance subscription bal_id={bal_id} (req_id={req_id}) for user {self.user_id}")
+        # Subscribe to position + balance streams; re-subscribe after every reconnect
+        await self._subscribe_streams()
+        self.client.on_reconnect(self._subscribe_streams)
 
         @self.client.on_position_changed
         async def handle_position(data):
@@ -74,6 +68,16 @@ class UserWatcher:
         self._trade_listener_task = asyncio.create_task(self._supervise_trade_listener())
 
         await self.client.run_forever()
+
+    async def _subscribe_streams(self):
+        """Send position-state + balance subscriptions. Called on init and after every reconnect."""
+        req_id = gen_request_id()
+        await self.client.ws.send(msg_subscribe_position_state(req_id))
+        logger.info(f"Sent position-state subscription (req_id={req_id}) for user {self.user_id}")
+        for bal_id in self.client.balances:
+            req_id = gen_request_id()
+            await self.client.ws.send(msg_subscribe_balance(bal_id, req_id))
+            logger.info(f"Sent balance subscription bal_id={bal_id} (req_id={req_id}) for user {self.user_id}")
 
     async def _supervise_trade_listener(self):
         backoff = 1
@@ -110,6 +114,14 @@ class UserWatcher:
           'balance_type': 'REAL' | 'PRACTICE',
         }
         """
+        if not self.client or not self.client.connected or not self.client.ws:
+            await publish(f'trade-results:{self.user_id}', {
+                'request_token': req.get('request_token'),
+                'status': 'ERROR',
+                'error': 'IQ Option connection is not active. Please wait and try again.',
+            })
+            return
+
         pair = req['pair']
         amount = req['amount']
         duration = req['duration_seconds']

@@ -25,11 +25,17 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     def pm2_status(name):
         try:
             r = subprocess.run(['pm2', 'jlist'], capture_output=True, text=True, timeout=5)
-            procs = json.loads(r.stdout)
+            if r.returncode != 0:
+                return 'UNKNOWN'
+            stdout = r.stdout.strip()
+            # pm2 sometimes emits warning lines before the JSON array
+            start = stdout.find('[')
+            if start == -1:
+                return 'UNKNOWN'
+            procs = json.loads(stdout[start:])
             for p in procs:
                 if p.get('name') == name:
-                    status = p.get('pm2_env', {}).get('status') or 'unknown'
-                    return status.upper()
+                    return (p.get('pm2_env', {}).get('status') or 'unknown').upper()
         except Exception:
             pass
         return 'UNKNOWN'
@@ -45,7 +51,7 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     bias_count = conn.execute("SELECT COUNT(*) FROM market_bias").fetchone()[0]
     conn.close()
 
-    bias_status = pm2_status('iqbot-v2-bias')
+    bias_status = pm2_status('iqbot-v2-bias-engine')
     bot_status = pm2_status('iqbot-v2-bot')
 
     # Real Redis connectivity check
@@ -90,12 +96,12 @@ async def cb_system_action(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if action == 'restart_bias':
         import subprocess
-        subprocess.run(['pm2', 'restart', 'iqbot-v2-bias'], capture_output=True)
+        subprocess.run(['pm2', 'restart', 'iqbot-v2-bias-engine'], capture_output=True)
         await update.callback_query.edit_message_text("🔄 Bias engine restart triggered.")
 
     elif action == 'view_logs':
         await update.callback_query.edit_message_text(
-            "📋 Run `pm2 logs iqbot-v2-bias` on the VPS for live logs."
+            "📋 Run `pm2 logs iqbot-v2-bias-engine` on the VPS for live logs."
         )
 
     elif action == 'cleanup':

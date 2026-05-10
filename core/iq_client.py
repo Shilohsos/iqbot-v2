@@ -76,43 +76,53 @@ class IQOptionClient:
             "User-Agent": "iqbot-v2/1.0",
         }
 
-        self.ws = await websockets.connect(WS_URL, additional_headers=headers, max_size=5 * 1024 * 1024)
-        self.connected = True
+        try:
+            self.ws = await websockets.connect(WS_URL, additional_headers=headers, max_size=5 * 1024 * 1024)
 
-        # Cancel any prior receive loop before starting a new one (prevents
-        # double-spawn on reconnect — both loops would fight over _pending)
-        if self._receive_task and not self._receive_task.done():
-            self._receive_task.cancel()
-        self._receive_task = asyncio.create_task(self._receive_loop())
+            # Cancel any prior receive loop before starting a new one (prevents
+            # double-spawn on reconnect — both loops would fight over _pending)
+            if self._receive_task and not self._receive_task.done():
+                self._receive_task.cancel()
+            # _receive_loop runs while self._connecting so it can relay auth responses
+            self._receive_task = asyncio.create_task(self._receive_loop())
 
-        # 1. Authenticate
-        auth_result = await self._request(
-            lambda rid: msg_authenticate(self.ssid, rid),
-            timeout=10, expect_data=False
-        )
-        if isinstance(auth_result, dict) and not auth_result.get("success", False):
-            raise RuntimeError(f"Authentication failed: {auth_result}")
-        self.authenticated = True
-        logger.info("Authenticated successfully")
+            # 1. Authenticate
+            auth_result = await self._request(
+                lambda rid: msg_authenticate(self.ssid, rid),
+                timeout=10, expect_data=False
+            )
+            if isinstance(auth_result, dict) and not auth_result.get("success", False):
+                raise RuntimeError(f"Authentication failed: {auth_result}")
+            self.authenticated = True
+            logger.info("Authenticated successfully")
 
-        # 2. CRITICAL: setOptions(sendResults=True)
-        await self._request(msg_set_options, timeout=5, expect_data=False)
-        logger.info("setOptions confirmed")
+            # 2. CRITICAL: setOptions(sendResults=True)
+            await self._request(msg_set_options, timeout=5, expect_data=False)
+            logger.info("setOptions confirmed")
 
-        # 3. Fetch profile
-        self.profile = await self._request(msg_get_profile, timeout=5)
-        logger.info(f"Profile: {self.profile.get('user_id', 'N/A')}")
+            # 3. Fetch profile
+            self.profile = await self._request(msg_get_profile, timeout=5)
+            logger.info(f"Profile: {self.profile.get('user_id', 'N/A')}")
 
-        # 4. Fetch balances
-        await self._refresh_balances()
+            # 4. Fetch balances
+            await self._refresh_balances()
 
-        # 5. Fetch initialization data (assets + payout %)
-        await self._refresh_initialization_data()
+            # 5. Fetch initialization data (assets + payout %)
+            await self._refresh_initialization_data()
 
-        logger.info(
-            f"Client ready. {len(self.balances)} balances, {len(self.actives)} actives"
-        )
-        self._connecting = False
+            # Mark connected only after ALL initialization succeeds.
+            # If anything above raises, self.connected stays False and
+            # _reconnect()'s while-loop correctly retries.
+            self.connected = True
+            logger.info(
+                f"Client ready. {len(self.balances)} balances, {len(self.actives)} actives"
+            )
+        except Exception:
+            self.connected = False
+            self.authenticated = False
+            raise
+        finally:
+            self._connecting = False
 
     async def _refresh_balances(self):
         result = await self._request(msg_get_balances, timeout=5)
@@ -155,7 +165,7 @@ class IQOptionClient:
                             self.actives_by_name[short] = aid
 
     async def _receive_loop(self):
-        while self.connected:
+        while self.connected or self._connecting:
             try:
                 msg_raw = await self.ws.recv()
                 if isinstance(msg_raw, bytes):
@@ -215,6 +225,18 @@ class IQOptionClient:
         elif name in ("position-changed", "portfolio.position-changed"):
             for h in self._position_handlers:
                 asyncio.create_task(h(body))
+        elif name == "socket-option-closed":
+            # setOptions(sendResults=True) pushes these when a binary option closes.
+            # Normalise to the same shape that position-changed handlers expect.
+            win_str = body.get('win', 'loose')
+            normalized = {
+                'status': 'closed',
+                'external_id': body.get('id'),
+                'close_reason': win_str,
+                'close_profit': body.get('profit_amount', 0) if win_str == 'win' else 0,
+            }
+            for h in self._position_handlers:
+                asyncio.create_task(h(normalized))
         elif name == "balance-changed":
             for h in self._balance_handlers:
                 asyncio.create_task(h(body))
