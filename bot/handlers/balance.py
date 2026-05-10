@@ -63,22 +63,30 @@ async def cb_refresh_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     fresh_ssid = await refresh_ssid_if_stale(account['id'])
     if not fresh_ssid:
         await update.callback_query.edit_message_text(
-            "❌ Could not refresh session. Re-link your account with /addaccount.",
+            "❌ Session expired — IQ Option could not authenticate.\n\n"
+            "Your credentials may have changed or the session has lapsed.\n"
+            "Use /addaccount to re-link your account.",
         )
         return
 
     balances = await fetch_balances(fresh_ssid, account['platform_id'])
-    if balances:
-        for bal in balances:
-            try:
-                update_balance(
-                    user['id'],
-                    bal.get('type', 4),
-                    bal.get('amount', 0),
-                    bal.get('currency', 'USD'),
-                )
-            except Exception:
-                pass
+    if not balances:
+        await update.callback_query.edit_message_text(
+            "❌ Connected to IQ Option but balance fetch returned nothing.\n\n"
+            "Try again in a moment, or use /addaccount to re-link.",
+        )
+        return
+
+    for bal in balances:
+        try:
+            update_balance(
+                user['id'],
+                bal.get('type', 4),
+                bal.get('amount', 0),
+                bal.get('currency', 'USD'),
+            )
+        except Exception:
+            pass
 
     summary = get_user_account_summary(user['id'])
     await update.callback_query.edit_message_text(
