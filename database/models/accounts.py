@@ -8,35 +8,40 @@ def add_account(
     ssid: str, platform_id: int
 ) -> int:
     conn = get_connection()
-    cursor = conn.execute(
-        """INSERT INTO accounts
-           (user_id, email_encrypted, password_encrypted, ssid, ssid_at, platform_id)
-           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)""",
-        (user_id, email_encrypted, password_encrypted, ssid, platform_id)
-    )
-    conn.commit()
-    acc_id = cursor.lastrowid
-    conn.close()
-    return acc_id
+    try:
+        cursor = conn.execute(
+            """INSERT INTO accounts
+               (user_id, email_encrypted, password_encrypted, ssid, ssid_at, platform_id)
+               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)""",
+            (user_id, email_encrypted, password_encrypted, ssid, platform_id)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
 
 
 def get_account_credentials(user_id: int) -> Optional[dict]:
     conn = get_connection()
-    row = conn.execute(
-        "SELECT * FROM accounts WHERE user_id=? AND is_active=1",
-        (user_id,)
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        row = conn.execute(
+            "SELECT * FROM accounts WHERE user_id=? AND is_active=1",
+            (user_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
 
 
 def get_user_account_summary(user_id: int) -> dict:
     conn = get_connection()
-    row = conn.execute(
-        "SELECT * FROM accounts WHERE user_id=? AND is_active=1",
-        (user_id,)
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT * FROM accounts WHERE user_id=? AND is_active=1",
+            (user_id,)
+        ).fetchone()
+    finally:
+        conn.close()
     if not row:
         return {
             'practice_balance': 0, 'practice_currency': 'USD',
@@ -53,52 +58,102 @@ def get_user_account_summary(user_id: int) -> dict:
 
 def update_balance(user_id: int, balance_id: int, amount: float, currency: str = 'USD'):
     conn = get_connection()
-    row = conn.execute(
-        "SELECT * FROM accounts WHERE user_id=? AND is_active=1", (user_id,)
-    ).fetchone()
-    if not row:
+    try:
+        row = conn.execute(
+            "SELECT * FROM accounts WHERE user_id=? AND is_active=1", (user_id,)
+        ).fetchone()
+        if not row:
+            return
+        r = dict(row)
+        if balance_id == r.get('real_balance_id'):
+            conn.execute(
+                """UPDATE accounts
+                   SET real_balance_amount=?, real_balance_currency=?
+                   WHERE user_id=? AND is_active=1""",
+                (amount, currency, user_id)
+            )
+        else:
+            conn.execute(
+                """UPDATE accounts
+                   SET practice_balance_amount=?, practice_balance_currency=?
+                   WHERE user_id=? AND is_active=1""",
+                (amount, currency, user_id)
+            )
+        conn.commit()
+    finally:
         conn.close()
-        return
-    r = dict(row)
-    if balance_id == r.get('real_balance_id'):
-        conn.execute(
-            """UPDATE accounts
-               SET real_balance_amount=?, real_balance_currency=?
-               WHERE user_id=? AND is_active=1""",
-            (amount, currency, user_id)
-        )
-    else:
-        conn.execute(
-            """UPDATE accounts
-               SET practice_balance_amount=?, practice_balance_currency=?
-               WHERE user_id=? AND is_active=1""",
-            (amount, currency, user_id)
-        )
-    conn.commit()
-    conn.close()
 
 
 def deactivate_account(user_id: int):
     conn = get_connection()
-    conn.execute(
-        "UPDATE accounts SET is_active=0 WHERE user_id=?", (user_id,)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE accounts SET is_active=0 WHERE user_id=?", (user_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def store_oauth_tokens(account_id: int, ssid: str, refresh_tok: str, expires_in: int):
+    """Persist SSID + refresh_token + expiry after a successful OAuth exchange."""
+    from datetime import datetime, timedelta
+    expires_at = (datetime.utcnow() + timedelta(seconds=expires_in)).isoformat()
+    conn = get_connection()
+    try:
+        conn.execute(
+            """UPDATE accounts
+               SET ssid=?, ssid_at=CURRENT_TIMESTAMP,
+                   refresh_token=?, token_expires_at=?
+               WHERE id=?""",
+            (ssid, refresh_tok, expires_at, account_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_oauth_account(
+    user_id: int,
+    ssid: str,
+    refresh_tok: str,
+    expires_in: int,
+    platform_id: int,
+) -> int:
+    """Create an account record for users who connected via OAuth (no stored password)."""
+    from datetime import datetime, timedelta
+    expires_at = (datetime.utcnow() + timedelta(seconds=expires_in)).isoformat()
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO accounts
+               (user_id, email_encrypted, password_encrypted,
+                ssid, ssid_at, platform_id, refresh_token, token_expires_at)
+               VALUES (?, '', '', ?, CURRENT_TIMESTAMP, ?, ?, ?)""",
+            (user_id, ssid, platform_id, refresh_tok, expires_at)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
 
 
 def update_ssid(account_id: int, ssid: str):
     conn = get_connection()
-    conn.execute(
-        "UPDATE accounts SET ssid = ?, ssid_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (ssid, account_id)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "UPDATE accounts SET ssid = ?, ssid_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (ssid, account_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_account_by_id(account_id: int) -> Optional[dict]:
     conn = get_connection()
-    row = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        row = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()

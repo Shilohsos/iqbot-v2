@@ -3,8 +3,7 @@ Admin: /admin — admin control panel menu.
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from bot.middleware.approval_gate import require_admin
-from bot.middleware.admin_gate import require_admin as require_admin_simple
+from bot.middleware.admin_gate import require_admin
 from database.models.users import set_tier
 
 
@@ -31,33 +30,61 @@ async def cmd_admin_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-@require_admin_simple
+@require_admin
 async def cb_admin_action(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Handle admin panel callback actions — both menu nav and user actions."""
     await update.callback_query.answer()
     data = update.callback_query.data
 
+    def _extract_user_id(data: str) -> int | None:
+        parts = data.split(':')
+        if len(parts) < 3 or not parts[2].isdigit():
+            return None
+        return int(parts[2])
+
+    def _log_admin_action(admin_id: int, action: str, target_user_id: int, details: str = ''):
+        from database.db import get_connection
+        from datetime import datetime, timezone
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO admin_actions (admin_id, action, target_user_id, details, created_at) VALUES (?,?,?,?,?)",
+            (admin_id, action, target_user_id, details, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+    admin_tg_id = update.effective_user.id
+
     # ── User actions (tier, ban, delete) ──
     if data.startswith('adm:tier:'):
-        user_id = int(data.split(':')[2])
+        user_id = _extract_user_id(data)
+        if user_id is None:
+            return
         from database.models.users import get_user_by_id
         user = get_user_by_id(user_id)
         new_tier = 'PRO' if user['tier'] != 'PRO' else 'NEWBIE'
         set_tier(user_id, new_tier)
+        _log_admin_action(admin_tg_id, 'TIER_CHANGE', user_id, f"new_tier={new_tier}")
         await update.callback_query.edit_message_text(
             f"Tier changed to *{new_tier}* for user {user_id}",
             parse_mode='Markdown'
         )
 
     elif data.startswith('adm:ban:'):
-        user_id = int(data.split(':')[2])
+        user_id = _extract_user_id(data)
+        if user_id is None:
+            return
         set_tier(user_id, 'BANNED')
+        _log_admin_action(admin_tg_id, 'BAN', user_id)
         await update.callback_query.edit_message_text(
             f"🚫 User {user_id} banned."
         )
 
     elif data.startswith('adm:delete:'):
-        user_id = int(data.split(':')[2])
+        user_id = _extract_user_id(data)
+        if user_id is None:
+            return
+        _log_admin_action(admin_tg_id, 'DELETE_USER', user_id)
         from database.db import get_connection
         conn = get_connection()
         conn.execute("DELETE FROM users WHERE id=?", (user_id,))

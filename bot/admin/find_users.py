@@ -3,9 +3,10 @@ Admin: /find — find user by IQ ID, @username, or telegram ID.
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from bot.middleware.approval_gate import require_admin
+from bot.middleware.admin_gate import require_admin
 from database.models.users import find_user_full
 from core.currency import format_amount
+from bot.ui.messages import reply_safe
 
 
 @require_admin
@@ -55,7 +56,6 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🗑 Delete", callback_data=f"adm:delete:{user['id']}")],
     ])
 
-    from bot.ui.messages import reply_safe
     await reply_safe(update,
         text=text[:4000], parse_mode='Markdown',
         reply_markup=keyboard

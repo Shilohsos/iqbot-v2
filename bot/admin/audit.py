@@ -4,7 +4,7 @@ For v1: text report only. PDF generation is a v2.1 feature.
 """
 from telegram import Update
 from telegram.ext import ContextTypes
-from bot.middleware.approval_gate import require_admin
+from bot.middleware.admin_gate import require_admin
 from database.db import get_connection
 
 

@@ -3,7 +3,8 @@
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from database.models.users import upsert_user, log_funnel_event, get_user
+from database.models.users import upsert_user, get_user
+from database.models.funnel import log_funnel_event
 from bot.ui.images import send_image_with_caption
 from bot.ui.keyboards import welcome_keyboard
 from bot.ui.messages import WELCOME_TEXT
@@ -98,8 +99,9 @@ async def show_user_menu(update, ctx):
     keyboard.append([InlineKeyboardButton("⚙️ Settings", callback_data='show_settings')])
     keyboard.append([InlineKeyboardButton("ℹ️ About", callback_data='show_about')])
 
+    from bot.ui.messages import md_escape
     await update.message.reply_text(
-        f"💜 Welcome back, *@{update.effective_user.username or 'trader'}*\n\n"
+        f"💜 Welcome back, *@{md_escape(update.effective_user.username or 'trader')}*\n\n"
         f"Your tier: *{user.get('tier', 'NEWBIE')}*\n\n"
         f"What would you like to do?",
         parse_mode='Markdown',
@@ -195,10 +197,11 @@ async def cb_back_to_user_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("⚙️ Settings", callback_data='show_settings')])
     keyboard.append([InlineKeyboardButton("ℹ️ About", callback_data='show_about')])
     
+    from bot.ui.messages import md_escape
     await reply_safe(
         update,
         text=(
-            f"💜 *@{update.effective_user.username or 'trader'}*\n\n"
+            f"💜 *@{md_escape(update.effective_user.username or 'trader')}*\n\n"
             f"Tier: *{user.get('tier', 'NEWBIE')}*\n\n"
             f"What would you like to do?"
         ),

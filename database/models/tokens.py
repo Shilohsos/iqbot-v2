@@ -20,12 +20,16 @@ def assign_token(user_id: int, token: str) -> bool:
 
 def revoke_token(token: str) -> bool:
     conn = get_connection()
-    conn.execute(
-        "UPDATE users SET token=NULL WHERE token=?", (token,)
-    )
-    conn.commit()
-    conn.close()
-    return True
+    try:
+        conn.execute(
+            "UPDATE users SET token=NULL WHERE token=?", (token,)
+        )
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
 
 
 def validate_token(telegram_id: int, token: str) -> bool:

@@ -25,6 +25,9 @@ def ago_since(dt_str: str) -> str:
         return 'never'
     try:
         dt = datetime.fromisoformat(dt_str)
+        # SQLite CURRENT_TIMESTAMP is UTC but timezone-naive; attach UTC before converting
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
         delta = now_wat() - dt.astimezone(WAT)
         hours = delta.total_seconds() / 3600
         if hours < 1:

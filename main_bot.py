@@ -4,6 +4,8 @@ Run: python3 main_bot.py
 PM2: iqbot-v2-bot
 """
 import asyncio
+import hashlib
+import hmac
 import signal
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -13,21 +15,166 @@ from aiohttp import web
 
 from database.db import init_db
 from database.models.funnel import log_funnel_event
-from config import BOT_TOKEN
+from config import BOT_TOKEN, LANDING_WEBHOOK_SECRET, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_REDIRECT_URI
 from utils.logger import get_logger
 
 logger = get_logger("main-bot")
 
+_WEBHOOK_SECRET_BYTES = LANDING_WEBHOOK_SECRET.encode() if LANDING_WEBHOOK_SECRET else None
+
 
 async def funnel_webhook(request: web.Request):
+    # Verify HMAC-SHA256 signature when secret is configured
+    if _WEBHOOK_SECRET_BYTES:
+        signature = request.headers.get('X-Signature', '')
+        body = await request.read()
+        expected = hmac.new(_WEBHOOK_SECRET_BYTES, body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            logger.warning("Funnel webhook rejected: invalid signature")
+            return web.Response(status=401, text='Unauthorized')
+        try:
+            import json
+            data = json.loads(body)
+        except Exception:
+            logger.warning("Funnel webhook rejected: invalid JSON")
+            return web.Response(status=400, text='Bad Request')
+    else:
+        try:
+            data = await request.json()
+        except Exception:
+            logger.warning("Funnel webhook rejected: invalid JSON")
+            return web.Response(status=400, text='Bad Request')
+
     try:
-        data = await request.json()
-        event_type = data.get('type', 'UNKNOWN')
-        metadata = str(data.get('metadata', {}))
+        event_type = str(data.get('type', 'UNKNOWN'))[:64]
+        metadata = str(data.get('metadata', {}))[:1024]
         log_funnel_event(None, event_type, metadata)
     except Exception:
-        pass
+        logger.exception("Funnel webhook: failed to log event")
     return web.Response(text='OK')
+
+
+async def oauth_callback(request: web.Request):
+    """
+    Handles the OAuth redirect from IQ Option after user authorization.
+    IQ Option redirects here with ?code=<auth_code>&state=<state_token>.
+    We exchange the code for SSID + refresh_token, store them, and notify
+    the user in Telegram.
+    """
+    # The Telegram Bot application is stored on the aiohttp app
+    bot = request.app['bot']
+
+    code = request.rel_url.query.get('code', '')
+    state = request.rel_url.query.get('state', '')
+    error = request.rel_url.query.get('error', '')
+
+    if error:
+        logger.warning(f"OAuth callback received error: {error}")
+        return web.Response(
+            status=400,
+            content_type='text/html',
+            text=(
+                '<html><body style="font-family:sans-serif;text-align:center;padding:40px">'
+                '<h2>❌ Authorization failed</h2>'
+                f'<p>{error}</p><p>Return to Telegram and try again.</p></body></html>'
+            ),
+        )
+
+    if not code or not state:
+        return web.Response(status=400, text='Missing code or state parameter.')
+
+    from core.iq_oauth import pop_pending, exchange_code
+    pending = pop_pending(state)
+    if not pending:
+        return web.Response(
+            status=400, text='Authorization link expired or already used. Please try again in Telegram.'
+        )
+
+    telegram_id: int = pending['telegram_id']
+    verifier: str = pending['code_verifier']
+
+    try:
+        tokens = await exchange_code(
+            client_id=OAUTH_CLIENT_ID,
+            code=code,
+            redirect_uri=OAUTH_REDIRECT_URI,
+            code_verifier=verifier,
+        )
+    except RuntimeError as e:
+        logger.error(f"OAuth code exchange failed for telegram_id={telegram_id}: {e}")
+        try:
+            await bot.send_message(
+                chat_id=telegram_id,
+                text=f"❌ Could not connect your IQ Option account:\n\n{e}\n\nPlease try /addaccount again.",
+            )
+        except Exception:
+            pass
+        return web.Response(
+            status=502,
+            content_type='text/html',
+            text=(
+                '<html><body style="font-family:sans-serif;text-align:center;padding:40px">'
+                '<h2>❌ Connection failed</h2>'
+                '<p>Could not exchange the authorisation code. Check Telegram for details.</p>'
+                '</body></html>'
+            ),
+        )
+
+    ssid = tokens['access_token']
+    refresh_tok = tokens.get('refresh_token', '')
+    expires_in = tokens.get('expires_in', 1209600)
+
+    # Look up the DB user and persist the account
+    from database.models.users import get_user
+    from database.models.accounts import add_oauth_account, get_account_credentials
+    import os
+
+    user = get_user(telegram_id)
+    if not user:
+        logger.error(f"OAuth callback: no DB user for telegram_id={telegram_id}")
+        return web.Response(status=400, text='User not found.')
+
+    # If account already exists, update its tokens; otherwise create a new one
+    existing = get_account_credentials(user['id'])
+    if existing:
+        from database.models.accounts import store_oauth_tokens
+        store_oauth_tokens(existing['id'], ssid, refresh_tok, expires_in)
+        account_id = existing['id']
+    else:
+        account_id = add_oauth_account(
+            user_id=user['id'],
+            ssid=ssid,
+            refresh_tok=refresh_tok,
+            expires_in=expires_in,
+            platform_id=int(os.getenv('PLATFORM_ID', '0')),
+        )
+
+    # Spawn watcher + log funnel event
+    from bot.handlers.onboard import _post_connect
+    _post_connect(user['id'], telegram_id)
+
+    # Notify the user in Telegram
+    try:
+        await bot.send_message(
+            chat_id=telegram_id,
+            text=(
+                "✅ *IQ Option account connected!*\n\n"
+                "Your watcher is starting up. Use /trade when ready."
+            ),
+            parse_mode='Markdown',
+        )
+    except Exception as e:
+        logger.warning(f"Could not send Telegram confirmation to {telegram_id}: {e}")
+
+    logger.info(f"OAuth connect complete for telegram_id={telegram_id} account_id={account_id}")
+    return web.Response(
+        content_type='text/html',
+        text=(
+            '<html><body style="font-family:sans-serif;text-align:center;padding:40px">'
+            '<h2>✅ Account connected!</h2>'
+            '<p>Return to Telegram to start trading.</p></body></html>'
+        ),
+    )
 
 
 def build_application() -> Application:
@@ -156,7 +303,11 @@ async def main():
     await app.updater.start_polling(drop_pending_updates=True)
 
     funnel_app = web.Application()
+    funnel_app['bot'] = app.bot  # make bot available to OAuth callback handler
     funnel_app.router.add_post('/event', funnel_webhook)
+    if OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET and OAUTH_REDIRECT_URI:
+        funnel_app.router.add_get('/oauth/callback', oauth_callback)
+        logger.info("OAuth callback endpoint registered at /oauth/callback")
     runner = web.AppRunner(funnel_app)
     await runner.setup()
     site = web.TCPSite(runner, 'localhost', 8090)

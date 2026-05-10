@@ -3,7 +3,7 @@ Admin: /activation — approve/reject pending users.
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from bot.middleware.approval_gate import require_admin
+from bot.middleware.admin_gate import require_admin
 from database.models.users import get_pending_users, get_user_by_id, approve_user, set_rejection, set_token
 
 
@@ -44,8 +44,8 @@ async def cb_approve(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _, _, user_id, tier = update.callback_query.data.split(':')
     user_id = int(user_id)
     approve_user(user_id, tier)
-    # Auto-generate token
-    token = f"10x-{secrets.token_hex(6).upper()}"
+    # Auto-generate token with 128-bit entropy
+    token = f"10x-{secrets.token_urlsafe(16)}"
     set_token(user_id, token)
     user = get_user_by_id(user_id)
     await update.callback_query.answer(f"Approved as {tier}")

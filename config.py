@@ -42,3 +42,12 @@ DATABASE_PATH = os.getenv('IQBOT_DB_PATH', '/root/iqbot-v2/iqbot.db')
 
 # ── Funnel ──────────────────────────
 LANDING_WEBHOOK_SECRET = os.getenv('LANDING_WEBHOOK_SECRET', '')
+
+# ── Quadcode OAuth (optional — enables OAuth connect flow) ───────────────────
+# Obtain client_id + client_secret by registering an OAuth application with
+# the Quadcode / IQ Option partner portal.
+# If not set, the bot falls back to the legacy email/password login flow.
+OAUTH_CLIENT_ID = int(os.getenv('OAUTH_CLIENT_ID', '0')) or None
+OAUTH_CLIENT_SECRET = os.getenv('OAUTH_CLIENT_SECRET', '') or None
+OAUTH_REDIRECT_URI = os.getenv('OAUTH_REDIRECT_URI', '')
+OAUTH_BASE_URL = os.getenv('OAUTH_BASE_URL', 'https://auth.iqoption.com')

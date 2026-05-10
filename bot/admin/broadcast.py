@@ -3,7 +3,7 @@ Admin: /broadcast — send message to user segments.
 """
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from bot.middleware.approval_gate import require_admin
+from bot.middleware.admin_gate import require_admin
 from database.models.users import get_all_user_ids
 from database.models.broadcasts import log_broadcast, update_broadcast_count
 import asyncio

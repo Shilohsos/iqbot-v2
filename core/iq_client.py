@@ -49,6 +49,7 @@ class IQOptionClient:
         self._server_time = None
         self._server_time_local = None
         self._connecting = False
+        self._receive_task: asyncio.Task | None = None
 
     async def _request(self, msg_fn, *args, timeout: float = 10, expect_data: bool = True):
         """Send a request and wait for response. expect_data=True means wait for data (not just ACK)."""
@@ -56,8 +57,14 @@ class IQOptionClient:
         fut = asyncio.get_event_loop().create_future()
         self._pending[rid] = fut
         self._pending_data[rid] = expect_data
-        await self.ws.send(msg_fn(rid, *args) if args else msg_fn(rid))
-        return await asyncio.wait_for(fut, timeout=timeout)
+        try:
+            await self.ws.send(msg_fn(rid, *args) if args else msg_fn(rid))
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except (asyncio.TimeoutError, Exception):
+            # Drop the orphaned future so _pending doesn't grow without bound
+            self._pending.pop(rid, None)
+            self._pending_data.pop(rid, None)
+            raise
 
     async def connect(self):
         """Connect, authenticate, send setOptions, fetch initialization data."""
@@ -69,40 +76,53 @@ class IQOptionClient:
             "User-Agent": "iqbot-v2/1.0",
         }
 
-        self.ws = await websockets.connect(WS_URL, additional_headers=headers, max_size=5 * 1024 * 1024)
-        self.connected = True
+        try:
+            self.ws = await websockets.connect(WS_URL, additional_headers=headers, max_size=5 * 1024 * 1024)
 
-        # Start receive loop
-        asyncio.create_task(self._receive_loop())
+            # Cancel any prior receive loop before starting a new one (prevents
+            # double-spawn on reconnect — both loops would fight over _pending)
+            if self._receive_task and not self._receive_task.done():
+                self._receive_task.cancel()
+            # _receive_loop runs while self._connecting so it can relay auth responses
+            self._receive_task = asyncio.create_task(self._receive_loop())
 
-        # 1. Authenticate
-        auth_result = await self._request(
-            lambda rid: msg_authenticate(self.ssid, rid),
-            timeout=10, expect_data=False
-        )
-        if isinstance(auth_result, dict) and not auth_result.get("success", True):
-            raise RuntimeError(f"Authentication failed: {auth_result}")
-        self.authenticated = True
-        logger.info("Authenticated successfully")
+            # 1. Authenticate
+            auth_result = await self._request(
+                lambda rid: msg_authenticate(self.ssid, rid),
+                timeout=10, expect_data=False
+            )
+            if isinstance(auth_result, dict) and not auth_result.get("success", False):
+                raise RuntimeError(f"Authentication failed: {auth_result}")
+            self.authenticated = True
+            logger.info("Authenticated successfully")
 
-        # 2. CRITICAL: setOptions(sendResults=True)
-        await self._request(msg_set_options, timeout=5, expect_data=False)
-        logger.info("setOptions confirmed")
+            # 2. CRITICAL: setOptions(sendResults=True)
+            await self._request(msg_set_options, timeout=5, expect_data=False)
+            logger.info("setOptions confirmed")
 
-        # 3. Fetch profile
-        self.profile = await self._request(msg_get_profile, timeout=5)
-        logger.info(f"Profile: {self.profile.get('user_id', 'N/A')}")
+            # 3. Fetch profile
+            self.profile = await self._request(msg_get_profile, timeout=5)
+            logger.info(f"Profile: {self.profile.get('user_id', 'N/A')}")
 
-        # 4. Fetch balances
-        await self._refresh_balances()
+            # 4. Fetch balances
+            await self._refresh_balances()
 
-        # 5. Fetch initialization data (assets + payout %)
-        await self._refresh_initialization_data()
+            # 5. Fetch initialization data (assets + payout %)
+            await self._refresh_initialization_data()
 
-        logger.info(
-            f"Client ready. {len(self.balances)} balances, {len(self.actives)} actives"
-        )
-        self._connecting = False
+            # Mark connected only after ALL initialization succeeds.
+            # If anything above raises, self.connected stays False and
+            # _reconnect()'s while-loop correctly retries.
+            self.connected = True
+            logger.info(
+                f"Client ready. {len(self.balances)} balances, {len(self.actives)} actives"
+            )
+        except Exception:
+            self.connected = False
+            self.authenticated = False
+            raise
+        finally:
+            self._connecting = False
 
     async def _refresh_balances(self):
         result = await self._request(msg_get_balances, timeout=5)
@@ -112,6 +132,10 @@ class IQOptionClient:
 
     async def _refresh_initialization_data(self):
         init_data = await self._request(msg_get_initialization_data, timeout=10)
+
+        # Clear stale entries so a delisted/renamed asset doesn't linger after reconnect
+        self.actives.clear()
+        self.actives_by_name.clear()
 
         # Parse actives — they're dicts keyed by string IDs
         for atype in ['turbo', 'binary', 'blitz']:
@@ -141,7 +165,7 @@ class IQOptionClient:
                             self.actives_by_name[short] = aid
 
     async def _receive_loop(self):
-        while self.connected:
+        while self.connected or self._connecting:
             try:
                 msg_raw = await self.ws.recv()
                 if isinstance(msg_raw, bytes):
@@ -198,9 +222,21 @@ class IQOptionClient:
         microservice = msg.get("microserviceName")
         if microservice == "quotes" and name == "candle-generated":
             await self._dispatch_candle(body)
-        elif name == "position-changed":
+        elif name in ("position-changed", "portfolio.position-changed"):
             for h in self._position_handlers:
                 asyncio.create_task(h(body))
+        elif name == "socket-option-closed":
+            # setOptions(sendResults=True) pushes these when a binary option closes.
+            # Normalise to the same shape that position-changed handlers expect.
+            win_str = body.get('win', 'loose')
+            normalized = {
+                'status': 'closed',
+                'external_id': body.get('id'),
+                'close_reason': win_str,
+                'close_profit': body.get('profit_amount', 0) if win_str == 'win' else 0,
+            }
+            for h in self._position_handlers:
+                asyncio.create_task(h(normalized))
         elif name == "balance-changed":
             for h in self._balance_handlers:
                 asyncio.create_task(h(body))
@@ -227,6 +263,9 @@ class IQOptionClient:
             lambda rid: msg_subscribe_candles(active_id, timeframe, rid),
             timeout=5, expect_data=False
         )
+        if isinstance(result, dict) and result.get('success') is False:
+            logger.warning(f"Candle subscription rejected for {pair}@{timeframe}: {result}")
+            return False
         return True
 
     def on_candle_close(self, handler):
@@ -253,7 +292,7 @@ class IQOptionClient:
             lambda rid: msg_get_candles(active_id, timeframe, count, to_time, rid),
             timeout=15
         )
-        return result.get('candles', [])
+        return result.get('candles', []) if isinstance(result, dict) else []
 
     async def place_binary_option(
         self, pair: str, direction: str,
