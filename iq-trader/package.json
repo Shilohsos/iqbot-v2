@@ -1,0 +1,13 @@
+{
+    "name": "iq-trader",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "server.js",
+    "engines": {
+        "node": ">=18"
+    },
+    "dependencies": {
+        "@quadcode-tech/client-sdk-js": "^1.3.21",
+        "express": "^4.18.0"
+    }
+}
