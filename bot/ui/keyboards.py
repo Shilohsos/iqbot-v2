@@ -22,10 +22,10 @@ def trade_pairs_keyboard(pairs: list, include_cancel: bool = True) -> InlineKeyb
     return InlineKeyboardMarkup(keyboard)
 
 
-_TF_LABELS = {30: "30s", 60: "1m", 300: "5m", 600: "10m"}
+_TF_LABELS = {60: "1m", 180: "3m", 300: "5m", 900: "15m"}
 
 def timeframe_keyboard(allowed: list = None, include_cancel: bool = True) -> InlineKeyboardMarkup:
-    all_tfs = [30, 60, 300, 600]
+    all_tfs = [60, 180, 300, 900]
     tfs = [tf for tf in all_tfs if allowed is None or tf in allowed]
     row = [InlineKeyboardButton(_TF_LABELS[tf], callback_data=f'select_tf:{tf}') for tf in tfs]
     keyboard = [row]
