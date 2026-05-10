@@ -58,7 +58,11 @@ async def execute_trade(
         rid = gen_request_id()
         await ws.send(msg_authenticate(ssid, rid))
         auth_resp = await _wait_for(ws, rid, timeout=10, expect_data=False)
-        if not auth_resp.get("success", False):
+        # IQ Option auth response: msg is True (bool) on success, False on failure
+        if isinstance(auth_resp, bool):
+            if not auth_resp:
+                return {"status": "ERROR", "error": "Authentication failed — invalid SSID"}
+        elif not auth_resp.get("success", False):
             return {"status": "ERROR", "error": f"Authentication failed: {auth_resp}"}
 
         # 3. setOptions — critical: enables socket-option-closed result events
