@@ -12,6 +12,7 @@ from bot.ui.messages import reply_safe
 @require_admin
 async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
+        ctx.user_data['awaiting_find_query'] = True
         await reply_safe(update,
             text=(
                 "🔍 *Find User*\n\n"

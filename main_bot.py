@@ -291,6 +291,11 @@ def build_application() -> Application:
         group=1
     )
 
+    async def error_handler(update, ctx):
+        logger.exception(f"Unhandled exception in handler (update={update})", exc_info=ctx.error)
+
+    app.add_error_handler(error_handler)
+
     return app
 
 
@@ -300,7 +305,7 @@ async def main():
     app = build_application()
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
+    await app.updater.start_polling(drop_pending_updates=False)
 
     funnel_app = web.Application()
     funnel_app['bot'] = app.bot  # make bot available to OAuth callback handler

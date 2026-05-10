@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 from core.redis_bus import publish, subscribe_once
 from database.models.bias import get_top_pairs_by_confidence
 from database.models.users import get_user
-from database.models.accounts import get_user_account_summary
+from database.models.accounts import get_user_account_summary, get_account_credentials
 from bot.middleware.approval_gate import require_approved
 from bot.ui.images import send_image_with_caption
 from bot.ui.messages import format_bias_emoji, format_pnl, reply_safe
@@ -153,6 +153,16 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     pair = ctx.user_data['trade_pair']
     tf = ctx.user_data['trade_timeframe']
     amount = ctx.user_data['trade_amount']
+
+    # Block trade if user has no linked IQ Option account
+    if not get_account_credentials(user['id']):
+        await update.callback_query.answer("No account linked.", show_alert=True)
+        await update.callback_query.edit_message_text(
+            "❌ *No IQ Option account linked.*\n\n"
+            "Use /addaccount to connect your account before trading.",
+            parse_mode='Markdown',
+        )
+        return
 
     # Check sufficient balance before sending to watcher
     summary = get_user_account_summary(user['id'])
