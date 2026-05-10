@@ -2,157 +2,72 @@
 
 **Date:** 2026-05-10
 **Author:** Wizard (Hermes Agent)
-**Branch:** master
 
 ---
 
-## Fix Round 1 — Bot Crash Loop (RESOLVED)
+## Round 3 — Balance & Bias Engine Issues (ACTIVE)
 
-**Issue:** Bot crash loop — 122+ restarts, Telegram 409 Conflict
+### Issue #1: Live Balance Shows $0.00
 
-**Root Cause:** PM2 `restart_delay: 3000` too fast — old process Telegram polling still alive when new process starts → 409 Conflict → crash → repeat.
+**Symptom:** Telegram `/balance` shows Practice: $4,379.87 but Live: $0.00
 
-**Fix:**
-- `ecosystem.config.js`: `restart_delay: 8000`, `kill_timeout: 10000`
-- `pip3 install` all missing deps from `requirements.txt` (python-telegram-bot, python-dotenv, cryptography, telethon)
-
-**Result:** Bot stable — 0 restarts, all commands responsive.
-
----
-
-## Fix Round 2 — Trades Not Working (CURRENT)
-
-**Symptoms from Telegram (2026-05-10 06:13-06:27):**
-- Trade fails with: `sent 1011 (internal error) keepalive ping timeout; no close frame received`
-- "Trade result delayed. Check /history shortly."
-- Multiple PENDING trades that never resolve
-- Live balance shows $0.00 (account not connected)
-
-**Watcher logs confirm:**
+**DB state:**
 ```
-02:14:50 — WS closed, reconnecting...    ← last reconnection attempt
-07:13:35 — Trade execution error: 1011    ← 5 HOURS later, trade on DEAD connection
+user_id=2, practice_balance_amount=4379.87, real_balance_amount=0.0
 ```
 
-**Three root causes:**
+**Watcher confirms 2 balances exist:**
+```
+07:56:48 Client ready. 2 balances, 286 actives
+07:56:48 Sent balance subscription bal_id=1223061988
+07:56:48 Sent balance subscription bal_id=1223061989
+```
+
+**Earlier watcher run (00:27:16) confirmed real balance exists:**
+```
+balance_sync: {"balance_type":1, "amount":4379.87}
+balance_sync: {"balance_type":4, "amount":8182.71}
+```
+
+**Root cause hypothesis:** The `update_balance()` function in `database/models/accounts.py` maps `balance_type == 1` to `real_balance_amount` and anything else to `practice_balance_amount`. But IQ Option may return different type values than expected, OR the watcher's `start()` loop is not calling `update_balance()` for both balance objects correctly.
+
+**Files to investigate:**
+- `database/models/accounts.py` — `update_balance()` (line 60)
+- `watcher/connection.py` — balance sync loop (lines 46-52)
+- `core/iq_client.py` — `_refresh_balances()` (line 117) — check what `bal['type']` values actually are
 
 ---
 
-### Root Cause #1: Reconnect loop exits prematurely
+### Issue #2: Bias Engine Shows UNKNOWN
 
-**File:** `core/iq_client.py`, line 80
+**Symptom:** Telegram `/system` shows "Bias engine: UNKNOWN" even though `pm2 list` shows `iqbot-v2-bias` is ONLINE.
+
+**Root cause:** `bot/admin/system.py` still references PM2 process name `iqbot-v2-bias-engine` (lines 54, 99, 104), but the actual PM2 process is named `iqbot-v2-bias`.
 
 ```python
-# connect() method — BROKEN:
-self.ws = await websockets.connect(...)
-self.connected = True          # ← SET TOO EARLY (line 80)
-# ... authenticate, setOptions, getProfile, getBalances, getInitializationData
-# If ANY of those throw, self.connected stays True
+# system.py line 54 — WRONG NAME:
+bias_status = pm2_status('iqbot-v2-bias-engine')
+
+# Should be:
+bias_status = pm2_status('iqbot-v2-bias')
 ```
 
-`_reconnect()` loop checks `while not self.connected` → sees True → exits immediately without retrying.
+**This fix was previously applied but LOST during the merge conflict resolution** of PR #4 (`df072b4`). The `git checkout --theirs` resolved the conflict by using the PR branch version which had the old name.
 
-**Result:** Watcher thinks it's connected but WS is dead. Sits silently for 5 hours.
-
-**Fix:** Move `self.connected = True` to the END of `connect()`, after ALL initialization succeeds. Add `finally` block that sets `self.connected = False` on failure.
+**Fix:** Change all 3 occurrences of `iqbot-v2-bias-engine` to `iqbot-v2-bias` in `bot/admin/system.py`.
 
 ---
 
-### Root Cause #2: Position/Balance subscriptions lost on reconnect
+## Previous Rounds (RESOLVED)
 
-**File:** `watcher/connection.py`, lines 56-62
+### Round 2 — Trade Failures (Resolved by PR #4)
 
-Position-state and balance subscriptions are only sent during initial `start()`. When the client reconnects, `_on_reconnect_cb` only re-subscribes candles — not positions or balances.
+All three fixes applied in `d9a7d2d`:
+1. ✅ `core/iq_client.py` — `self.connected = True` moved to after all init steps
+2. ✅ `watcher/connection.py` — `_subscribe_streams()` + `on_reconnect` for subscription replay
+3. ✅ `watcher/connection.py` — Pre-trade connection guard
 
-**Result:** After any reconnect, position-changed and balance-changed events never arrive → "Trade result delayed" forever.
+### Round 1 — Bot Crash Loop (Resolved)
 
-**Fix:** Move subscription logic into a method, register it as `on_reconnect` callback so it replays after every reconnect.
-
----
-
-### Root Cause #3: No pre-trade connection check
-
-**File:** `watcher/connection.py`, line 151
-
-`_execute_trade()` calls `self.client.place_binary_option()` without verifying `self.client.connected` is True or that `self.client.ws` is alive.
-
-**Fix:** Add `if not self.client.connected or not self.client.ws:` check before trade, publish error to Redis immediately instead of letting 1011 crash through.
-
----
-
-## Fixes Applied
-
-### Fix to `core/iq_client.py` — `connect()` method
-
-```python
-async def connect(self):
-    self._connecting = True
-    logger.info("Connecting to IQ Option WS...")
-    headers = { ... }
-
-    try:
-        self.ws = await websockets.connect(WS_URL, ...)
-
-        if self._receive_task and not self._receive_task.done():
-            self._receive_task.cancel()
-        self._receive_task = asyncio.create_task(self._receive_loop())
-
-        # Auth + init steps...
-        await self._request(...)  # authenticate
-        self.authenticated = True
-        await self._request(...)  # setOptions
-        self.profile = await self._request(...)  # getProfile
-        await self._refresh_balances()
-        await self._refresh_initialization_data()
-
-        # ONLY NOW mark connected
-        self.connected = True
-        logger.info(f"Client ready. {len(self.balances)} balances, {len(self.actives)} actives")
-    except Exception:
-        self.connected = False
-        self.authenticated = False
-        raise
-    finally:
-        self._connecting = False
-```
-
-### Fix to `watcher/connection.py` — Re-subscribe on reconnect
-
-```python
-async def _subscribe_streams(self):
-    """Re-subscribe position + balance streams (called on init + reconnect)."""
-    req_id = gen_request_id()
-    await self.client.ws.send(msg_subscribe_position_state(req_id))
-    logger.info(f"Sent position-state subscription (req_id={req_id})")
-    for bal_id in self.client.balances:
-        req_id = gen_request_id()
-        await self.client.ws.send(msg_subscribe_balance(bal_id, req_id))
-        logger.info(f"Sent balance subscription bal_id={bal_id}")
-
-# In start(), register as reconnect callback:
-self.client.on_reconnect(self._subscribe_streams)
-```
-
-### Fix to `watcher/connection.py` — Pre-trade connection check
-
-```python
-async def _execute_trade(self, req: dict):
-    if not self.client or not self.client.connected or not self.client.ws:
-        await publish(f'trade-results:{self.user_id}', {
-            'request_token': req.get('request_token'),
-            'status': 'ERROR',
-            'error': 'IQ Option connection is not active. Please wait for reconnection.',
-        })
-        return
-    # ... rest of trade execution
-```
-
----
-
-## Verification
-
-After applying fixes:
-1. `pm2 restart all` — watcher should reconnect fully
-2. Watcher logs should show re-subscription after reconnect
-3. `/trade` in Telegram → should execute immediately (not "delayed")
-4. Trade results should resolve within 30-60s (not stuck PENDING)
+1. ✅ `ecosystem.config.js` — `restart_delay: 8000` + `kill_timeout: 10000`
+2. ✅ Missing pip packages installed
