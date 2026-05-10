@@ -8,7 +8,7 @@ import time
 import websockets
 from core.iq_protocol import (
     WS_URL, gen_request_id,
-    msg_authenticate, msg_set_options,
+    msg_authenticate, msg_set_options, msg_get_profile,
     msg_get_balances, msg_get_initialization_data,
     msg_subscribe_position_state, msg_open_binary_option,
 )
@@ -66,7 +66,13 @@ async def execute_trade(
         await ws.send(msg_set_options(rid))
         await _wait_for(ws, rid, timeout=5, expect_data=False)
 
-        # 4. Get balances → pick the right balance_id
+        # 4. Fetch profile — required to fully initialize the session for trading
+        #    (fresh WS connections without this step get "Time for purchasing is over")
+        rid = gen_request_id()
+        await ws.send(msg_get_profile(rid))
+        await _wait_for(ws, rid, timeout=5, expect_data=True)
+
+        # 5. Get balances → pick the right balance_id
         rid = gen_request_id()
         await ws.send(msg_get_balances(rid))
         balances_data = await _wait_for(ws, rid, timeout=5, expect_data=True)
@@ -74,7 +80,7 @@ async def execute_trade(
         if not balance_id:
             return {"status": "ERROR", "error": f"No {balance_type} balance found"}
 
-        # 5. Get initialization data → resolve pair name to active_id + profit %
+        # 6. Get initialization data → resolve pair name to active_id + profit %
         rid = gen_request_id()
         await ws.send(msg_get_initialization_data(rid))
         init_data = await _wait_for(ws, rid, timeout=10, expect_data=True)
@@ -82,16 +88,21 @@ async def execute_trade(
         if not active_id:
             return {"status": "ERROR", "error": f"Unknown pair: {pair}"}
 
-        # 6. Subscribe to position updates (needed to receive position-changed events)
+        # 7. Subscribe to position updates (needed to receive position-changed events)
         rid = gen_request_id()
         await ws.send(msg_subscribe_position_state(rid))
 
-        # 7. Place trade
+        # 8. Place trade
         rid = gen_request_id()
         option_type_id = 3 if duration_seconds <= 300 else 1  # 3=turbo, 1=binary
-        expired_at = int(time.time()) + duration_seconds
-        if option_type_id == 1:  # binary: align to next minute boundary
-            expired_at = ((expired_at // 60) + 1) * 60
+        now = int(time.time())
+        # Align expiry to the next exact candle close boundary.
+        # IQ Option rejects any expired_at that is not a multiple of the duration
+        # (e.g. now+30=151 is rejected; the correct value is the next 30s mark=150).
+        if option_type_id == 3:  # turbo: align to next duration-second boundary
+            expired_at = ((now // duration_seconds) + 1) * duration_seconds
+        else:  # binary: align to next minute boundary
+            expired_at = ((now // 60) + 1) * 60
         profit_percent = _get_profit_percent(init_data, active_id)
 
         await ws.send(msg_open_binary_option(
@@ -110,7 +121,7 @@ async def execute_trade(
 
         logger.info(f"Trade placed id={trade_iq_id} pair={pair} dir={direction} amount={amount}")
 
-        # 8. Wait for position result (position-changed or socket-option-closed)
+        # 9. Wait for position result (position-changed or socket-option-closed)
         deadline = time.time() + timeout_result
         while time.time() < deadline:
             remaining = deadline - time.time()
