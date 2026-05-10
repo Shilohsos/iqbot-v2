@@ -5,55 +5,52 @@
 
 ---
 
-## Round 4 — Trade Rejection on New Account
+## Round 5 — V3 Trade Executor: "Time for purchasing options is over"
 
-### Symptom
+### Status
 
-New account (`Shilohwrpz@gmail.com`, user 54, profile 176449379) onboarded successfully. Balance syncs ($28.93 practice). But trade fails with:
+V3 one-shot executor deployed and functional. Bot connects, authenticates, resolves pair, places trade. But IQ Option rejects with:
+
+> Time for purchasing options is over, please try again later.
+
+### Debug Evidence
 
 ```
-Trade failed: IQ Option returned no trade ID.
-Response: {'message': 'Time for purchasing options is over, please try again later.'}
+15:02:01 DEBUG trade params:
+  pair=front.EURUSD-OTC
+  active_id=76
+  direction=put
+  expired_at=1778418151 (now=1778418121, +30s ✓)
+  amount=10.0
+  balance_id=1223061989 (PRACTICE, $4,379.87)
+  profit=86%
+  option_type=3 (turbo)
 ```
 
-### Root Cause
+All parameters appear correct:
+- ✅ Expiry is 30 seconds in the future
+- ✅ Active ID resolves from init data
+- ✅ Balance ID matches the account's practice balance
+- ✅ Profit percent from IQ Option's own commission data
+- ✅ Option type 3 for ≤5min turbo
 
-**Not a code bug.** IQ Option rejected the trade with a legitimate market timing error. The asset (EURUSD-OTC, 30s) is not accepting orders — likely the OTC market window closed or the 30-second timeframe isn't available right now.
+### What's Ruled Out
 
-The watcher correctly:
-1. Received the trade request on `trade-requests:54`
-2. Connected to IQ Option (profile 176449379, 2 balances, 286 actives)
-3. Attempted to place the binary option
-4. IQ Option responded with: `{'message': 'Time for purchasing options is over, please try again later.'}`
-5. The validation code (from `claude/fix-repo-issues-am3zk`) detected no trade ID and reported the error
+- ❌ Server clock — matches real time
+- ❌ SSID — authenticates successfully
+- ❌ Balance — exists and has funds
+- ❌ Active ID resolution — resolves to 76
+- ❌ Market hours — user confirms manual trades work on same asset/timeframe
 
-### User-Facing Improvement Needed
+### Hypothesis
 
-The error displayed to the user is misleading — "IQ Option returned no trade ID" sounds like a bug. The actual IQ Option error message should be shown instead:
+IQ Option may require a **minimum session warm-up time** between authentication and trade placement on a fresh WebSocket connection. The old persistent watcher model kept the connection alive, so trades were always on a "warm" session. The V3 one-shot executor creates a brand-new connection per trade, which may trigger a different rate-limit or session-validation rule.
 
-```python
-# In watcher/connection.py, the trade ID validation:
-if not trade_iq_id:
-    error_msg = result.get('message', 'No trade ID returned') if isinstance(result, dict) else 'No trade ID returned'
-    await publish(f'trade-results:{self.user_id}', {
-        'request_token': req['request_token'],
-        'status': 'ERROR',
-        'error': error_msg,  # Show actual IQ Option message
-    })
-```
+Or: the `profit_percent` value (86) may not match IQ Option's expected value for this specific active/option-type combination. The `_get_profit_percent` function extracts commission from init data, but the field path may be wrong for turbo options.
 
-### Account State
+### Recommendation
 
-| Field | Old Account (user 2) | New Account (user 54) |
-|-------|---------------------|----------------------|
-| Email | Shilohx436@gmail.com | Shilohwrpz@gmail.com |
-| Profile | 182511307 | 176449379 |
-| Practice | $4,379.87 | $28.93 |
-| Real | $0.00 | $0.00 |
-| Watcher | ✅ Running | ✅ Running |
-
-### Action
-
-- Try a different asset/timeframe that's currently open
-- Try during active market hours
-- Improve error message to surface IQ Option's actual rejection reason
+1. Add a 2-3 second delay after setOptions before placing the trade
+2. Verify the profit_percent extraction path for turbo actives
+3. Try with option_type_id=1 (binary) instead of 3 (turbo) for 30s trades
+4. Fallback: if the error persists, have Claude trace the exact IQ Option API expectations for the "open-option" endpoint
