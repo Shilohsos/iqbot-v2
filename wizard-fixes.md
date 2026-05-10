@@ -5,55 +5,55 @@
 
 ---
 
-## Current State
+## Round 4 — Trade Rejection on New Account
 
-**Merged to master (commit `96e0d9b`):**
-- ✅ `claude/review-github-files-TyJZA` — bias UNKNOWN + balance fixes (partial)
-- ✅ `claude/fix-repo-issues-am3zk` — trade execution, result ID, tier timeframes
+### Symptom
 
-**Status after restart:**
+New account (`Shilohwrpz@gmail.com`, user 54, profile 176449379) onboarded successfully. Balance syncs ($28.93 practice). But trade fails with:
 
-| Fix | Status | Detail |
-|-----|--------|--------|
-| Bias engine UNKNOWN | ✅ Fixed | PM2 name `iqbot-v2-bias` |
-| Live balance $0.00 | ❌ Still broken | See below |
-| Trade result ID validation | ✅ Applied | |
-| Tier timeframes | ✅ Applied | |
-| NO_BIAS UX | ✅ Applied | |
+```
+Trade failed: IQ Option returned no trade ID.
+Response: {'message': 'Time for purchasing options is over, please try again later.'}
+```
 
----
+### Root Cause
 
-## Remaining Issue: Live Balance $0.00
+**Not a code bug.** IQ Option rejected the trade with a legitimate market timing error. The asset (EURUSD-OTC, 30s) is not accepting orders — likely the OTC market window closed or the 30-second timeframe isn't available right now.
 
-**Root cause gap:**
+The watcher correctly:
+1. Received the trade request on `trade-requests:54`
+2. Connected to IQ Option (profile 176449379, 2 balances, 286 actives)
+3. Attempted to place the binary option
+4. IQ Option responded with: `{'message': 'Time for purchasing options is over, please try again later.'}`
+5. The validation code (from `claude/fix-repo-issues-am3zk`) detected no trade ID and reported the error
 
-The `update_balance()` function now matches `balance_id` against `real_balance_id` column:
+### User-Facing Improvement Needed
+
+The error displayed to the user is misleading — "IQ Option returned no trade ID" sounds like a bug. The actual IQ Option error message should be shown instead:
 
 ```python
-if balance_id == r.get('real_balance_id'):
-    # update real_balance_amount
-else:
-    # update practice_balance_amount
+# In watcher/connection.py, the trade ID validation:
+if not trade_iq_id:
+    error_msg = result.get('message', 'No trade ID returned') if isinstance(result, dict) else 'No trade ID returned'
+    await publish(f'trade-results:{self.user_id}', {
+        'request_token': req['request_token'],
+        'status': 'ERROR',
+        'error': error_msg,  # Show actual IQ Option message
+    })
 ```
 
-But `real_balance_id` and `practice_balance_id` are **NULL** for all accounts:
+### Account State
 
-```
-user=2 real_bid=NULL practice_bid=NULL real_amt=$0.0 practice_amt=$4379.87
-```
+| Field | Old Account (user 2) | New Account (user 54) |
+|-------|---------------------|----------------------|
+| Email | Shilohx436@gmail.com | Shilohwrpz@gmail.com |
+| Profile | 182511307 | 176449379 |
+| Practice | $4,379.87 | $28.93 |
+| Real | $0.00 | $0.00 |
+| Watcher | ✅ Running | ✅ Running |
 
-Since NULL never equals any balance_id, every balance update goes to `practice_balance_amount`.
+### Action
 
-**Fix needed:** During watcher initialization (after `connect()`), the watcher must identify which balance is real vs practice by their `type` field (1=Real, 4=Practice) and store the balance IDs in the accounts table:
-
-```python
-# In watcher/connection.py start():
-for bal_id, bal in self.client.balances.items():
-    if bal.get('type') == 1:  # REAL
-        store_real_balance_id(user_id, bal_id)
-    elif bal.get('type') == 4:  # PRACTICE
-        store_practice_balance_id(user_id, bal_id)
-    update_balance(user_id, bal_id, bal['amount'], bal.get('currency', 'USD'))
-```
-
-Or alternatively, add a fallback in `update_balance()`: if `real_balance_id` is NULL, use `balance_type` (1 vs 4) to determine which column to update.
+- Try a different asset/timeframe that's currently open
+- Try during active market hours
+- Improve error message to surface IQ Option's actual rejection reason
