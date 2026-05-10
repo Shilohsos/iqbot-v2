@@ -117,8 +117,6 @@ async def _run_martingale(
             amount=amount,
             duration_seconds=tf,
             balance_type=balance_type,
-            user_id=user['id'],
-            account_id=account['id'],
         )
 
         _apply_balances(user['id'], result.get('balances'))
@@ -413,8 +411,6 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         amount=amount,
         duration_seconds=tf,
         balance_type=balance_type,
-        user_id=user['id'],
-        account_id=account['id'],
     )
 
     # Always persist any refreshed balances we got back, regardless of status
