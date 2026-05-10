@@ -70,6 +70,8 @@ async def execute_trade(
         rid = gen_request_id()
         await ws.send(msg_get_initialization_data(rid))
         init_data = await _wait_for(ws, rid, timeout=10, expect_data=True)
+        if not isinstance(init_data, dict):
+            return {"status": "ERROR", "error": "Unexpected initialization data format"}
         active_id = _resolve_active_id(init_data, pair)
         if not active_id:
             return {"status": "ERROR", "error": f"Unknown pair: {pair}"}
@@ -295,7 +297,7 @@ async def _wait_for(ws, request_id: str, timeout: float = 10, expect_data: bool 
             return {"success": body}
         if isinstance(body, dict) and "result" in body:
             return body["result"]
-        return body if isinstance(body, dict) else {}
+        return body  # may be list (balances) or dict; callers handle both
     raise asyncio.TimeoutError(f"No response for request {request_id[:8]}")
 
 
