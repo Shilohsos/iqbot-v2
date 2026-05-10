@@ -126,6 +126,11 @@ async def receive_password(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     _post_connect(user['id'], update.effective_user.id)
 
+    # Fetch initial balances so the trade flow's balance check works on the
+    # very first /trade. Without this, practice/real_balance_amount sit at 0
+    # and every trade is blocked by "Insufficient balance".
+    await _seed_initial_balances(user['id'], ssid, int(os.getenv('PLATFORM_ID', '0')))
+
     await update.message.reply_text(
         "✅ *Account connected!*\n\n"
         "Use /trade when ready.",
@@ -148,3 +153,28 @@ def _post_connect(db_user_id: int, telegram_id: int):
     """Log funnel event after any successful account connect."""
     from database.models.funnel import log_funnel_event
     log_funnel_event(telegram_id, 'ADDED_ACCOUNT')
+
+
+async def _seed_initial_balances(user_id: int, ssid: str, platform_id: int):
+    """One-shot connection to fetch and store the user's initial balances."""
+    from core.trade_executor import fetch_balances
+    from database.models.accounts import update_balance
+    try:
+        balances = await fetch_balances(ssid, platform_id)
+    except Exception as e:
+        logger.warning(f"Initial balance fetch raised for user_id={user_id}: {e}")
+        return
+    if not balances:
+        logger.warning(f"Initial balance fetch returned nothing for user_id={user_id}")
+        return
+    for bal in balances:
+        try:
+            update_balance(
+                user_id,
+                bal.get('type', 4),
+                bal.get('amount', 0),
+                bal.get('currency', 'USD'),
+            )
+        except Exception:
+            pass
+    logger.info(f"Seeded {len(balances)} balances for user_id={user_id}")

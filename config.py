@@ -13,7 +13,7 @@ BIAS_PAIRS = [
     "NZDUSD-OTC", "GBPJPY-OTC", "AUDCAD-OTC", "AUDJPY-OTC",
 ]
 
-BIAS_TIMEFRAMES = [30, 60, 300, 600]  # 30s, 1m, 5m, 10m
+BIAS_TIMEFRAMES = [60, 180, 300, 900]  # 1m, 3m, 5m, 15m
 
 BIAS_API_CREDENTIALS = {
     'ssid': os.getenv('BIAS_ENGINE_SSID', ''),
@@ -33,8 +33,8 @@ AFFILIATE_LINK = os.getenv('AFFILIATE_LINK', 'https://iqoption.com/?aff=YOUR_ID'
 # ── Tiers ───────────────────────────
 DEFAULT_TIER = 'PENDING'
 TIER_TRADE_LIMITS = {
-    'NEWBIE': {'min': 1, 'max': 50, 'max_pairs': 4, 'timeframes': [30, 60, 300]},
-    'PRO': {'min': 1, 'max': 500, 'max_pairs': 8, 'timeframes': [30, 60, 300, 600]},
+    'NEWBIE': {'min': 1, 'max': 50, 'max_pairs': 4, 'timeframes': [60, 180, 300, 900]},
+    'PRO': {'min': 1, 'max': 500, 'max_pairs': 8, 'timeframes': [60, 180, 300, 900]},
 }
 
 # ── Database ────────────────────────

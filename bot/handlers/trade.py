@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database.models.bias import get_top_pairs_by_confidence, get_current_bias
 from database.models.users import get_user
-from database.models.accounts import get_user_account_summary, get_account_credentials
+from database.models.accounts import get_user_account_summary, get_account_credentials, update_balance
 from database.models.trades import log_trade, update_trade_result
 from bot.middleware.approval_gate import require_approved
 from bot.ui.images import send_image_with_caption
@@ -18,6 +18,22 @@ from bot.ui.keyboards import (
     account_choice_keyboard, trade_result_keyboard,
 )
 from config import TIER_TRADE_LIMITS
+
+
+def _apply_balances(user_id: int, balances: list | None):
+    """Persist a refreshed balances list into the accounts table."""
+    if not balances:
+        return
+    for bal in balances:
+        try:
+            update_balance(
+                user_id,
+                bal.get('type', 4),
+                bal.get('amount', 0),
+                bal.get('currency', 'USD'),
+            )
+        except Exception:
+            pass
 
 
 # ── Step 1: Open trade menu ──────────────────────────────────
@@ -72,7 +88,7 @@ async def cb_select_pair(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     user = get_user(update.effective_user.id)
     tier = user.get('tier', 'NEWBIE') if user else 'NEWBIE'
-    allowed_tfs = TIER_TRADE_LIMITS.get(tier, TIER_TRADE_LIMITS.get('NEWBIE', {})).get('timeframes', [30, 60, 300])
+    allowed_tfs = TIER_TRADE_LIMITS.get(tier, TIER_TRADE_LIMITS.get('NEWBIE', {})).get('timeframes', [60, 180, 300, 900])
     await update.callback_query.edit_message_text(
         f"*{pair}* selected.\n\nNow pick the *timeframe*:",
         parse_mode='Markdown',
@@ -238,6 +254,9 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         duration_seconds=tf,
         balance_type=balance_type,
     )
+
+    # Always persist any refreshed balances we got back, regardless of status
+    _apply_balances(user['id'], result.get('balances'))
 
     if result['status'] == 'ERROR':
         await update.callback_query.edit_message_text(

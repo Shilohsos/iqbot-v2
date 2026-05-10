@@ -149,9 +149,13 @@ async def oauth_callback(request: web.Request):
             platform_id=int(os.getenv('PLATFORM_ID', '0')),
         )
 
-    # Spawn watcher + log funnel event
-    from bot.handlers.onboard import _post_connect
+    # Log funnel + seed initial balances so the first /trade can see real funds
+    from bot.handlers.onboard import _post_connect, _seed_initial_balances
     _post_connect(user['id'], telegram_id)
+    try:
+        await _seed_initial_balances(user['id'], ssid, int(os.getenv('PLATFORM_ID', '0')))
+    except Exception as e:
+        logger.warning(f"Initial balance seed failed for user_id={user['id']}: {e}")
 
     # Notify the user in Telegram
     try:
@@ -193,7 +197,7 @@ def build_application() -> Application:
         cmd_trade, cb_select_pair, cb_select_timeframe,
         msg_trade_amount, cb_confirm_trade, cb_cancel_trade, cb_new_trade,
     )
-    from bot.handlers.balance import cmd_balance, cb_show_balance
+    from bot.handlers.balance import cmd_balance, cb_show_balance, cb_refresh_balance
     from bot.handlers.leaderboard import cmd_leaderboard, cb_show_leaderboard
     from bot.handlers.settings import (
         cmd_settings, cb_show_settings, cb_show_history, cb_show_about,
@@ -228,6 +232,7 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(cb_new_trade, pattern=r'^(new_trade|open_trade)$'))
 
     app.add_handler(CallbackQueryHandler(cb_show_balance, pattern='^show_balance$'))
+    app.add_handler(CallbackQueryHandler(cb_refresh_balance, pattern='^refresh_balance$'))
     app.add_handler(CallbackQueryHandler(cb_show_history, pattern='^show_history$'))
     app.add_handler(CallbackQueryHandler(cb_show_leaderboard, pattern='^show_leaderboard$'))
     app.add_handler(CallbackQueryHandler(cb_show_settings, pattern='^show_settings$'))
