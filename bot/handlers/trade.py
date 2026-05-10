@@ -3,13 +3,12 @@ Trade flow — the main event.
 Multi-step: pair → timeframe → amount → confirm → execute → result.
 """
 import asyncio
-import uuid
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from core.redis_bus import publish, subscribe_once
-from database.models.bias import get_top_pairs_by_confidence
+from database.models.bias import get_top_pairs_by_confidence, get_current_bias
 from database.models.users import get_user
 from database.models.accounts import get_user_account_summary, get_account_credentials
+from database.models.trades import log_trade, update_trade_result
 from bot.middleware.approval_gate import require_approved
 from bot.ui.images import send_image_with_caption
 from bot.ui.messages import format_bias_emoji, format_pnl, reply_safe
@@ -158,7 +157,8 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     amount = ctx.user_data['trade_amount']
 
     # Block trade if user has no linked IQ Option account
-    if not get_account_credentials(user['id']):
+    account = get_account_credentials(user['id'])
+    if not account:
         await update.callback_query.answer("No account linked.", show_alert=True)
         await update.callback_query.edit_message_text(
             "❌ *No IQ Option account linked.*\n\n"
@@ -167,7 +167,33 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Check sufficient balance before sending to watcher
+    # Read bias from DB and determine direction before connecting
+    bias = get_current_bias(pair, tf)
+    if not bias:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(
+            f"⏳ *No market data yet for {pair}*\n\n"
+            f"The bias engine hasn't computed this pair/timeframe yet. "
+            f"Try again in 30–60 seconds or select a different timeframe.",
+            parse_mode='Markdown',
+        )
+        return
+
+    if bias['bullish_percent'] >= 55:
+        direction = 'call'
+    elif bias['bullish_percent'] <= 45:
+        direction = 'put'
+    else:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(
+            f"⚪ *Market is neutral on {pair}*\n\n"
+            f"Bullish: {bias['bullish_percent']:.1f}%\n"
+            f"No clear direction — try another pair or wait.",
+            parse_mode='Markdown',
+        )
+        return
+
+    # Check sufficient balance (uses DB cache)
     summary = get_user_account_summary(user['id'])
     available = (
         summary['practice_balance'] if balance_type == 'PRACTICE'
@@ -181,114 +207,91 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    dir_emoji = '🟢' if direction == 'call' else '🔴'
     await update.callback_query.answer("Placing trade...")
     await update.callback_query.edit_message_text(
-        "⏳ *Analyzing market...*\n\nReading bias and executing trade.",
+        f"⏳ *Placing trade...*\n\n"
+        f"Pair: `{pair}`\n"
+        f"Direction: {dir_emoji} *{direction.upper()}*\n"
+        f"Amount: `{amount}`\n"
+        f"Bias: {bias['bullish_percent']:.1f}% bullish\n\n"
+        f"_Connecting to IQ Option..._",
         parse_mode='Markdown',
     )
 
-    # Send to watcher via Redis
-    request_token = uuid.uuid4().hex
-    await publish(f'trade-requests:{user["id"]}', {
-        'request_token': request_token,
-        'pair': pair,
-        'amount': amount,
-        'duration_seconds': tf,
-        'balance_type': balance_type,
-    })
+    from core.trade_executor import execute_trade
+    from core.iq_login import refresh_ssid_if_stale
 
-    # Wait for OPENED response (max 10s)
-    try:
-        result = await asyncio.wait_for(
-            subscribe_once(
-                f'trade-results:{user["id"]}',
-                filter_fn=lambda m: m.get('request_token') == request_token,
-                timeout=10
-            ),
-            timeout=10
-        )
-    except asyncio.TimeoutError:
+    fresh_ssid = await refresh_ssid_if_stale(account['id'])
+    if not fresh_ssid:
         await update.callback_query.edit_message_text(
-            "⚠️ Trade timed out. Please try again or contact admin."
+            "❌ Could not refresh session. Please re-link your account with /addaccount.",
         )
         return
 
-    if result['status'] == 'NO_BIAS':
-        await update.callback_query.edit_message_text(
-            f"⏳ *No market data yet for {pair}*\n\n"
-            f"The bias engine hasn't computed this pair/timeframe yet. "
-            f"Try again in 30–60 seconds or select a different timeframe.",
-            parse_mode='Markdown',
-        )
-        return
-
-    if result['status'] == 'NEUTRAL_BIAS':
-        bias = result.get('bias', {})
-        await update.callback_query.edit_message_text(
-            f"⚪ *Market is neutral on {pair}*\n\n"
-            f"Bullish: {bias.get('bullish_percent', 0):.1f}%\n"
-            f"No clear direction — try another pair or wait.",
-            parse_mode='Markdown',
-        )
-        return
-
-    if result['status'] != 'OPENED':
-        await update.callback_query.edit_message_text(
-            f"❌ Trade failed: `{result.get('error', result['status'])}`",
-            parse_mode='Markdown',
-        )
-        return
-
-    # Trade opened
-    direction = result['direction'].upper()
-    bias = result['bias']
-    emoji = '🟢' if direction == 'CALL' else '🔴'
-
-    await send_image_with_caption(
-        ctx.bot,
-        chat_id=update.effective_chat.id,
-        image_path=f'assets/trade_{direction.lower()}.png',
-        caption=(
-            f"{emoji} *TRADE OPENED*\n\n"
-            f"Pair: `{pair}`\n"
-            f"Direction: *{direction}*\n"
-            f"Amount: `{amount}`\n"
-            f"Bias: {bias['bullish_percent']:.1f}% bullish\n"
-            f"Confidence: {bias['confidence']:.0f}%\n\n"
-            f"⏳ _Result in {tf}s..._"
-        ),
-        parse_mode='Markdown',
+    result = await execute_trade(
+        ssid=fresh_ssid,
+        platform_id=account['platform_id'],
+        pair=pair,
+        direction=direction,
+        amount=amount,
+        duration_seconds=tf,
+        balance_type=balance_type,
     )
 
-    # Wait for CLOSED event
-    try:
-        close = await asyncio.wait_for(
-            subscribe_once(
-                f'trade-results:{user["id"]}',
-                filter_fn=lambda m: m.get('status') == 'CLOSED',
-                timeout=tf + 30,
-            ),
-            timeout=tf + 30
-        )
-    except asyncio.TimeoutError:
-        await ctx.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="⚠️ Trade result delayed. Check /history shortly.",
+    if result['status'] == 'ERROR':
+        await update.callback_query.edit_message_text(
+            f"❌ Trade failed: {result['error']}",
+            parse_mode='Markdown',
         )
         return
 
-    # Show result
-    res = close['result']
-    pnl = close['pnl']
+    iq_id = int(result['trade_id']) if result.get('trade_id') else None
+
+    if result['status'] == 'TIMEOUT':
+        log_trade(
+            user_id=user['id'], pair=pair, direction=direction,
+            amount=amount, duration_seconds=tf, iq_option_id=iq_id,
+            bias_at_entry=bias['bullish_percent'],
+            confidence_at_entry=bias['confidence'],
+            balance_type=balance_type,
+        )
+        await update.callback_query.edit_message_text(
+            "⚠️ Trade placed but result unknown. Check /history shortly.",
+        )
+        return
+
+    # WIN / LOSS / TIE
+    log_trade(
+        user_id=user['id'], pair=pair, direction=direction,
+        amount=amount, duration_seconds=tf, iq_option_id=iq_id,
+        bias_at_entry=bias['bullish_percent'],
+        confidence_at_entry=bias['confidence'],
+        balance_type=balance_type,
+    )
+    if iq_id:
+        update_trade_result(iq_id, result['status'], result['pnl'])
+
+    pnl = result['pnl']
+    res = result['status']
     if res == 'WIN':
         img = 'assets/trade_win.png'
-        caption = f"💚 *WIN!* {format_pnl(pnl)}"
+        caption = (
+            f"💚 *WIN!* {format_pnl(pnl)}\n\n"
+            f"Pair: `{pair}`  Direction: *{direction.upper()}*  Amount: `{amount}`"
+        )
     elif res == 'LOSS':
         img = 'assets/trade_loss.png'
-        caption = f"💔 *LOSS* -{format_amount(abs(amount))}"
+        caption = (
+            f"💔 *LOSS* -{format_amount(abs(amount))}\n\n"
+            f"Pair: `{pair}`  Direction: *{direction.upper()}*  Amount: `{amount}`"
+        )
     else:
         img = 'assets/trade_tie.png'
-        caption = "⚪ *TIE* (stake refunded)"
+        caption = (
+            f"⚪ *TIE* (stake refunded)\n\n"
+            f"Pair: `{pair}`  Direction: *{direction.upper()}*"
+        )
 
     await send_image_with_caption(
         ctx.bot,

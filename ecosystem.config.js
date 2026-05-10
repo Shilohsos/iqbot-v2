@@ -33,6 +33,5 @@ module.exports = {
       out_file: '/root/iqbot-v2/logs/affiliate-out.log',
       error_file: '/root/iqbot-v2/logs/affiliate-error.log',
     },
-    // user watchers spawned dynamically via pm2_manager
   ]
 };
