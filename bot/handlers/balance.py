@@ -88,9 +88,20 @@ async def cb_refresh_balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+    import datetime
+    from telegram.error import BadRequest as TgBadRequest
+
     summary = get_user_account_summary(user['id'])
-    await update.callback_query.edit_message_text(
-        text=_format_balance_text(summary),
-        parse_mode='Markdown',
-        reply_markup=_balance_keyboard(),
-    )
+    checked_at = datetime.datetime.utcnow().strftime('%H:%M:%S UTC')
+    text = _format_balance_text(summary) + f"\n\n_Updated: {checked_at}_"
+    try:
+        await update.callback_query.edit_message_text(
+            text=text,
+            parse_mode='Markdown',
+            reply_markup=_balance_keyboard(),
+        )
+    except TgBadRequest as e:
+        if "not modified" in str(e).lower():
+            await update.callback_query.answer("Balance unchanged")
+        else:
+            raise
