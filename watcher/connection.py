@@ -211,9 +211,13 @@ class UserWatcher:
         })
 
     async def _handle_balance(self, data):
+        # balance-changed events use 'balance_type' (1=Real, 4=Practice).
+        # Passing 'user_balance_id' (a large int) here was the bug: it never
+        # equalled 1, so every update silently went to practice_balance_amount.
+        bal_type = data.get('balance_type', data.get('type', 4))
         update_balance(
             self.user_id,
-            data.get('type', 4),
+            bal_type,
             data['amount'],
             data.get('currency', 'USD'),
         )
