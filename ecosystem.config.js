@@ -33,5 +33,19 @@ module.exports = {
       out_file: '/root/iqbot-v2/logs/affiliate-out.log',
       error_file: '/root/iqbot-v2/logs/affiliate-error.log',
     },
+    {
+      name: 'iq-trader',
+      script: 'server.js',
+      cwd: '/root/iqbot-v2/iq-trader',
+      autorestart: true,
+      restart_delay: 3000,
+      max_memory_restart: '300M',
+      out_file: '/root/iqbot-v2/logs/iq-trader-out.log',
+      error_file: '/root/iqbot-v2/logs/iq-trader-error.log',
+      env: {
+        NODE_ENV: 'production',
+        PORT: '3001',
+      },
+    },
   ]
 };
