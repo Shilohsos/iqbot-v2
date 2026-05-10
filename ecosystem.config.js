@@ -13,7 +13,7 @@ module.exports = {
       env: { NODE_ENV: 'production' },
     },
     {
-      name: 'iqbot-v2-bias-engine',
+      name: 'iqbot-v2-bias',
       script: 'main_bias.py',
       interpreter: 'python3',
       cwd: '/root/iqbot-v2',
