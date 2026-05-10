@@ -312,6 +312,13 @@ async def main():
     await app.start()
     await app.updater.start_polling(drop_pending_updates=False)
 
+    # Notify users of any trades that were in-flight when the bot last stopped
+    try:
+        from bot.startup_recovery import recover_pending_trades
+        await recover_pending_trades(app.bot)
+    except Exception:
+        logger.exception("Startup recovery failed (non-fatal)")
+
     funnel_app = web.Application()
     funnel_app['bot'] = app.bot  # make bot available to OAuth callback handler
     funnel_app.router.add_post('/event', funnel_webhook)

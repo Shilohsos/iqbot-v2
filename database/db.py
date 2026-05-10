@@ -127,6 +127,21 @@ CREATE TABLE IF NOT EXISTS leaderboard (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Pending trade results (written before wait loop; deleted on resolution)
+CREATE TABLE IF NOT EXISTS pending_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    iq_option_id INTEGER NOT NULL UNIQUE,
+    pair TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    amount REAL NOT NULL,
+    duration_seconds INTEGER NOT NULL,
+    balance_type TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Admin actions audit
 CREATE TABLE IF NOT EXISTS admin_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,6 +178,25 @@ def init_db():
         conn.execute("ALTER TABLE accounts ADD COLUMN refresh_token TEXT")
     if 'token_expires_at' not in acct_cols:
         conn.execute("ALTER TABLE accounts ADD COLUMN token_expires_at TEXT")
+    # pending_results table (add via migration if created before schema update)
+    if not conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='pending_results'"
+    ).fetchone():
+        conn.execute("""
+            CREATE TABLE pending_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                account_id INTEGER NOT NULL,
+                iq_option_id INTEGER NOT NULL UNIQUE,
+                pair TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                amount REAL NOT NULL,
+                duration_seconds INTEGER NOT NULL,
+                balance_type TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
     conn.commit()
     conn.close()
     _log.info(f"Database initialized at {DATABASE_PATH}")

@@ -30,6 +30,8 @@ async def execute_trade(
     duration_seconds: int,
     balance_type: str,
     timeout_result: int = None,
+    user_id: int = None,
+    account_id: int = None,
 ) -> dict:
     """
     Connect to IQ Option, place a binary option, wait for result, disconnect.
@@ -126,6 +128,30 @@ async def execute_trade(
 
         logger.info(f"Trade placed id={trade_iq_id} pair={pair} dir={direction} amount={amount}")
 
+        # Persist pending trade before the wait loop so a crash/restart doesn't
+        # silently lose it.  Deleted below on any successful resolution.
+        if user_id and account_id:
+            try:
+                from database.models.pending_results import save_pending, delete_pending as _del_pending
+                save_pending(
+                    user_id=user_id, account_id=account_id,
+                    iq_option_id=int(trade_iq_id),
+                    pair=pair, direction=direction, amount=amount,
+                    duration_seconds=duration_seconds, balance_type=balance_type,
+                    expires_at=expired_at,
+                )
+            except Exception as _pe:
+                logger.warning(f"Could not save pending result: {_pe}")
+        else:
+            _del_pending = None
+
+        def _resolve_pending():
+            if _del_pending:
+                try:
+                    _del_pending(int(trade_iq_id))
+                except Exception:
+                    pass
+
         # 6. Wait for position result (handles both direct and wrapped message formats)
         deadline = time.time() + timeout_result
         while time.time() < deadline:
@@ -160,6 +186,7 @@ async def execute_trade(
                 if inner_name in ("portfolio.position-changed", "position-changed"):
                     ext_id = inner_body.get("external_id") or inner_body.get("externalId")
                     if str(ext_id) == str(trade_iq_id) and inner_body.get("status") == "closed":
+                        _resolve_pending()
                         result = _build_result(inner_body, trade_iq_id, pair, direction, amount)
                         result["balances"] = await _try_refresh_balances(ws) or captured_balances
                         return result
@@ -167,6 +194,7 @@ async def execute_trade(
                 elif inner_name == "socket-option-closed":
                     opt_id = inner_body.get("id")
                     if str(opt_id) == str(trade_iq_id):
+                        _resolve_pending()
                         win_str = inner_body.get("win", "loose")
                         pnl = inner_body.get("profit_amount", 0) if win_str == "win" else 0
                         status = "WIN" if win_str == "win" else ("TIE" if win_str == "equal" else "LOSS")
@@ -174,11 +202,14 @@ async def execute_trade(
                                   "pair": pair, "direction": direction, "amount": amount}
                         result["balances"] = await _try_refresh_balances(ws) or captured_balances
                         return result
+                else:
+                    logger.info(f"Result loop [wrapped] unmatched inner_name={inner_name!r}")
 
             # Direct top-level position event (fallback / legacy format)
             elif msg_name in ("position-changed", "portfolio.position-changed"):
                 ext_id = body.get("external_id") or body.get("externalId")
                 if str(ext_id) == str(trade_iq_id) and body.get("status") == "closed":
+                    _resolve_pending()
                     result = _build_result(body, trade_iq_id, pair, direction, amount)
                     result["balances"] = await _try_refresh_balances(ws) or captured_balances
                     return result
@@ -187,6 +218,7 @@ async def execute_trade(
             elif msg_name == "socket-option-closed":
                 opt_id = body.get("id")
                 if str(opt_id) == str(trade_iq_id):
+                    _resolve_pending()
                     win_str = body.get("win", "loose")
                     pnl = body.get("profit_amount", 0) if win_str == "win" else 0
                     status = "WIN" if win_str == "win" else ("TIE" if win_str == "equal" else "LOSS")
@@ -195,9 +227,10 @@ async def execute_trade(
                     result["balances"] = await _try_refresh_balances(ws) or captured_balances
                     return result
 
-            else:
-                logger.debug(f"Result loop unmatched: name={msg_name}")
+            elif msg_name not in ("", "result", "heartbeat", "timesync"):
+                logger.info(f"Result loop unmatched: name={msg_name!r} trade_id={trade_iq_id}")
 
+        # Loop ended without a result — leave in pending_results for startup recovery
         return {
             "status": "TIMEOUT",
             "error": f"Trade result not received within {timeout_result}s",
@@ -205,6 +238,10 @@ async def execute_trade(
             "balances": captured_balances,
         }
 
+    except asyncio.CancelledError:
+        # Bot is shutting down — leave pending_results intact for startup recovery
+        logger.warning(f"execute_trade cancelled: trade {trade_iq_id} left in pending_results")
+        raise
     except asyncio.TimeoutError:
         return {"status": "ERROR", "error": "IQ Option request timed out"}
     except websockets.ConnectionClosed as e:
