@@ -284,14 +284,18 @@ async def _wait_for(ws, request_id: str, timeout: float = 10, expect_data: bool 
             msg = json.loads(raw)
         except json.JSONDecodeError:
             continue
+        if not isinstance(msg, dict):
+            continue
         if msg.get("request_id") != request_id:
             continue
         if msg.get("name") == "result" and expect_data:
             continue  # this is just the ACK; wait for the actual data response
         body = msg.get("msg", {})
+        if isinstance(body, bool):
+            return {"success": body}
         if isinstance(body, dict) and "result" in body:
             return body["result"]
-        return body
+        return body if isinstance(body, dict) else {}
     raise asyncio.TimeoutError(f"No response for request {request_id[:8]}")
 
 
