@@ -17,7 +17,6 @@ async def cmd_system(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
     # Gather system stats
-    from utils.pm2_manager import watcher_status
     from database.db import get_connection
     import json, subprocess
 

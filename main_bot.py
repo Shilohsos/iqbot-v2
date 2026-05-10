@@ -159,7 +159,7 @@ async def oauth_callback(request: web.Request):
             chat_id=telegram_id,
             text=(
                 "✅ *IQ Option account connected!*\n\n"
-                "Your watcher is starting up. Use /trade when ready."
+                "Use /trade when ready."
             ),
             parse_mode='Markdown',
         )

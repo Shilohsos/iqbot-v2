@@ -127,7 +127,7 @@ async def receive_password(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _post_connect(user['id'], update.effective_user.id)
 
     await update.message.reply_text(
-        "✅ *Account connected. Watcher is now starting up.*\n\n"
+        "✅ *Account connected!*\n\n"
         "Use /trade when ready.",
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup([
@@ -145,12 +145,6 @@ async def cancel_onboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── Shared post-connect logic ──────────────────────────────────────────────────
 
 def _post_connect(db_user_id: int, telegram_id: int):
-    """Log funnel event and spawn the watcher after any successful connect."""
+    """Log funnel event after any successful account connect."""
     from database.models.funnel import log_funnel_event
     log_funnel_event(telegram_id, 'ADDED_ACCOUNT')
-    try:
-        from utils.pm2_manager import spawn_watcher
-        if not spawn_watcher(db_user_id):
-            logger.error(f"Failed to spawn watcher for user_id={db_user_id}")
-    except Exception as e:
-        logger.error(f"spawn_watcher raised for user_id={db_user_id}: {e}")
