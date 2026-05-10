@@ -126,7 +126,7 @@ async def execute_trade(
 
         logger.info(f"Trade placed id={trade_iq_id} pair={pair} dir={direction} amount={amount}")
 
-        # 6. Wait for position result (position-changed or socket-option-closed)
+        # 6. Wait for position result (handles both direct and wrapped message formats)
         deadline = time.time() + timeout_result
         while time.time() < deadline:
             remaining = deadline - time.time()
@@ -143,28 +143,60 @@ async def execute_trade(
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(msg, dict):
+                continue
 
             msg_name = msg.get("name", "")
-            body = msg.get("msg", {})
+            raw_body = msg.get("msg")
+            body = raw_body if isinstance(raw_body, dict) else {}
 
-            if msg_name in ("position-changed", "portfolio.position-changed"):
-                if body.get("external_id") == trade_iq_id and body.get("status") == "closed":
+            # IQ Option pushes portfolio events wrapped inside a "message" envelope:
+            # {"name":"message","msg":{"name":"portfolio.position-changed","body":{...}}}
+            if msg_name == "message" and body:
+                inner_name = body.get("name", "")
+                # inner body may be under "body" key or directly in msg
+                inner_body = body.get("body") if isinstance(body.get("body"), dict) else body
+
+                if inner_name in ("portfolio.position-changed", "position-changed"):
+                    ext_id = inner_body.get("external_id") or inner_body.get("externalId")
+                    if str(ext_id) == str(trade_iq_id) and inner_body.get("status") == "closed":
+                        result = _build_result(inner_body, trade_iq_id, pair, direction, amount)
+                        result["balances"] = await _try_refresh_balances(ws) or captured_balances
+                        return result
+
+                elif inner_name == "socket-option-closed":
+                    opt_id = inner_body.get("id")
+                    if str(opt_id) == str(trade_iq_id):
+                        win_str = inner_body.get("win", "loose")
+                        pnl = inner_body.get("profit_amount", 0) if win_str == "win" else 0
+                        status = "WIN" if win_str == "win" else ("TIE" if win_str == "equal" else "LOSS")
+                        result = {"status": status, "pnl": pnl, "trade_id": str(trade_iq_id),
+                                  "pair": pair, "direction": direction, "amount": amount}
+                        result["balances"] = await _try_refresh_balances(ws) or captured_balances
+                        return result
+
+            # Direct top-level position event (fallback / legacy format)
+            elif msg_name in ("position-changed", "portfolio.position-changed"):
+                ext_id = body.get("external_id") or body.get("externalId")
+                if str(ext_id) == str(trade_iq_id) and body.get("status") == "closed":
                     result = _build_result(body, trade_iq_id, pair, direction, amount)
                     result["balances"] = await _try_refresh_balances(ws) or captured_balances
                     return result
 
+            # Direct socket-option-closed (from setOptions sendResults=True)
             elif msg_name == "socket-option-closed":
-                if body.get("id") == trade_iq_id:
+                opt_id = body.get("id")
+                if str(opt_id) == str(trade_iq_id):
                     win_str = body.get("win", "loose")
                     pnl = body.get("profit_amount", 0) if win_str == "win" else 0
                     status = "WIN" if win_str == "win" else ("TIE" if win_str == "equal" else "LOSS")
-                    result = {
-                        "status": status, "pnl": pnl,
-                        "trade_id": str(trade_iq_id),
-                        "pair": pair, "direction": direction, "amount": amount,
-                    }
+                    result = {"status": status, "pnl": pnl, "trade_id": str(trade_iq_id),
+                              "pair": pair, "direction": direction, "amount": amount}
                     result["balances"] = await _try_refresh_balances(ws) or captured_balances
                     return result
+
+            else:
+                logger.debug(f"Result loop unmatched: name={msg_name}")
 
         return {
             "status": "TIMEOUT",

@@ -1,6 +1,7 @@
 """
 Trade flow — the main event.
 Multi-step: pair → timeframe → amount → confirm → execute → result.
+Martingale: automatic 6-round, 2× sequence on loss.
 """
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -18,6 +19,12 @@ from bot.ui.keyboards import (
     account_choice_keyboard, trade_result_keyboard,
 )
 from config import TIER_TRADE_LIMITS
+from utils.logger import get_logger
+
+logger = get_logger("trade")
+
+MARTINGALE_MAX_ROUNDS = 6
+MARTINGALE_MULTIPLIER = 2.0
 
 
 def _apply_balances(user_id: int, balances: list | None):
@@ -34,6 +41,157 @@ def _apply_balances(user_id: int, balances: list | None):
             )
         except Exception:
             pass
+
+
+async def _run_martingale(
+    bot, chat_id: int, user: dict, account: dict,
+    pair: str, tf: int, amount: float, balance_type: str,
+    round_num: int,
+):
+    """
+    Background task: continue a martingale sequence from round_num onward.
+    Runs up to MARTINGALE_MAX_ROUNDS total, doubling on each LOSS.
+    Sends Telegram messages for every round result — no user input required.
+    """
+    from core.trade_executor import execute_trade
+    from core.iq_login import refresh_ssid_if_stale
+
+    while round_num <= MARTINGALE_MAX_ROUNDS:
+        # Re-read bias for current market direction
+        bias = get_current_bias(pair, tf)
+        if not bias:
+            await bot.send_message(
+                chat_id,
+                f"⚠️ *Martingale stopped* — lost market data for `{pair}`.",
+                parse_mode='Markdown',
+            )
+            return
+
+        if bias['bullish_percent'] >= 55:
+            direction = 'call'
+        elif bias['bullish_percent'] <= 45:
+            direction = 'put'
+        else:
+            await bot.send_message(
+                chat_id,
+                f"⚪ *Martingale stopped* — `{pair}` turned neutral.",
+                parse_mode='Markdown',
+            )
+            return
+
+        summary = get_user_account_summary(user['id'])
+        available = summary['practice_balance'] if balance_type == 'PRACTICE' else summary['real_balance']
+        if available < amount:
+            await bot.send_message(
+                chat_id,
+                f"❌ *Martingale stopped* — insufficient balance.\n"
+                f"Need `{amount:.2f}`, have `{available:.2f}`.",
+                parse_mode='Markdown',
+            )
+            return
+
+        dir_emoji = '🟢' if direction == 'call' else '🔴'
+        await bot.send_message(
+            chat_id,
+            f"🔄 *Martingale round {round_num}/{MARTINGALE_MAX_ROUNDS}*\n\n"
+            f"Pair: `{pair}` | {dir_emoji} *{direction.upper()}*\n"
+            f"Amount: `{amount:.2f}` | Bias: {bias['bullish_percent']:.1f}%\n\n"
+            f"_Placing trade..._",
+            parse_mode='Markdown',
+        )
+
+        fresh_ssid = await refresh_ssid_if_stale(account['id'])
+        if not fresh_ssid:
+            await bot.send_message(
+                chat_id,
+                "❌ *Martingale stopped* — session expired. Use /addaccount to re-link.",
+                parse_mode='Markdown',
+            )
+            return
+
+        result = await execute_trade(
+            ssid=fresh_ssid,
+            platform_id=account['platform_id'],
+            pair=pair,
+            direction=direction,
+            amount=amount,
+            duration_seconds=tf,
+            balance_type=balance_type,
+        )
+
+        _apply_balances(user['id'], result.get('balances'))
+
+        iq_id = int(result['trade_id']) if result.get('trade_id') else None
+        status = result.get('status')
+
+        if status in ('WIN', 'LOSS', 'TIE'):
+            log_trade(
+                user_id=user['id'], pair=pair, direction=direction,
+                amount=amount, duration_seconds=tf, iq_option_id=iq_id,
+                bias_at_entry=bias['bullish_percent'],
+                confidence_at_entry=bias['confidence'],
+                balance_type=balance_type,
+            )
+            if iq_id:
+                update_trade_result(iq_id, status, result.get('pnl', 0))
+
+        summary = get_user_account_summary(user['id'])
+        bal_now = summary['practice_balance'] if balance_type == 'PRACTICE' else summary['real_balance']
+
+        if status == 'ERROR':
+            await bot.send_message(
+                chat_id,
+                f"❌ *Martingale stopped* (round {round_num}) — trade error:\n_{result['error']}_",
+                parse_mode='Markdown',
+            )
+            return
+
+        if status == 'TIMEOUT':
+            await bot.send_message(
+                chat_id,
+                f"⚠️ *Martingale round {round_num}* — result unknown. Check /history. Stopped.",
+            )
+            return
+
+        if status == 'WIN':
+            pnl = result.get('pnl', 0)
+            await bot.send_message(
+                chat_id,
+                f"💚 *WIN!* +{format_pnl(pnl)} _(round {round_num})_\n\n"
+                f"Balance: `{bal_now:.2f}` | Martingale complete.",
+                parse_mode='Markdown',
+                reply_markup=trade_result_keyboard(),
+            )
+            return
+
+        if status == 'TIE':
+            await bot.send_message(
+                chat_id,
+                f"⚪ *TIE* — stake refunded _(round {round_num})_. Martingale stopped.",
+                parse_mode='Markdown',
+                reply_markup=trade_result_keyboard(),
+            )
+            return
+
+        # LOSS
+        if round_num == MARTINGALE_MAX_ROUNDS:
+            await bot.send_message(
+                chat_id,
+                f"💔 *LOSS* (round {round_num}/{MARTINGALE_MAX_ROUNDS}) — max rounds reached.\n\n"
+                f"Balance: `{bal_now:.2f}`\n_Use /trade to start a new session._",
+                parse_mode='Markdown',
+                reply_markup=trade_result_keyboard(),
+            )
+            return
+
+        next_amount = amount * MARTINGALE_MULTIPLIER
+        await bot.send_message(
+            chat_id,
+            f"💔 *LOSS* (round {round_num}) — doubling to `{next_amount:.2f}`...",
+            parse_mode='Markdown',
+        )
+        amount = next_amount
+        round_num += 1
 
 
 # ── Step 1: Open trade menu ──────────────────────────────────
@@ -303,7 +461,8 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         img = 'assets/trade_loss.png'
         caption = (
             f"💔 *LOSS* -{format_amount(abs(amount))}\n\n"
-            f"Pair: `{pair}`  Direction: *{direction.upper()}*  Amount: `{amount}`"
+            f"Pair: `{pair}`  Direction: *{direction.upper()}*  Amount: `{amount}`\n\n"
+            f"_🔄 Starting martingale — round 2/{MARTINGALE_MAX_ROUNDS}..._"
         )
     else:
         img = 'assets/trade_tie.png'
@@ -318,8 +477,24 @@ async def cb_confirm_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         image_path=img,
         caption=caption,
         parse_mode='Markdown',
-        reply_markup=trade_result_keyboard(),
+        reply_markup=trade_result_keyboard() if res != 'LOSS' else None,
     )
+
+    # Kick off martingale sequence automatically on first-round loss
+    if res == 'LOSS':
+        asyncio.create_task(
+            _run_martingale(
+                bot=ctx.bot,
+                chat_id=update.effective_chat.id,
+                user=user,
+                account=account,
+                pair=pair,
+                tf=tf,
+                amount=amount * MARTINGALE_MULTIPLIER,
+                balance_type=balance_type,
+                round_num=2,
+            )
+        )
 
 
 # ── Cancel / New trade ───────────────────────────────────────
